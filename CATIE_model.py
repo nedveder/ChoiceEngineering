@@ -10,24 +10,28 @@ ALTERNATIVE_B = 0
 
 class CatieAgent:
 
-    def __init__(self, tao=TAO, epsilon=EPSILON, phi=PHI, k=K):
+    def __init__(self, number_of_trials, tao=TAO, epsilon=EPSILON, phi=PHI, k=K):
         # Contingent Average value for each choice at each trial
+        self.number_of_trials = number_of_trials
         self.alt_b_contingent_average = 0
         self.alt_a_contingent_average = 0
         # Dictionaries containing all k-contingencies so far
         self.alt_a_contingencies = dict()
         self.alt_b_contingencies = dict()
-        # List of previous choices, where 1's indicate a
+        # Array of previous choices, where 1's indicate a
         # choice of alternative A and 0's indicate choice of alternative B.
-        self.previous_choices = []
-        self.outcomes = []  # List of all outcomes
-        # Lists of outcomes for each Alternative on each trial that it was chosen
-        self.alt_a_outcomes = []
-        self.alt_b_outcomes = []
-        # Index of current trial (equals len(self.previous_choices)
+        self.previous_choices = np.zeros(number_of_trials, dtype=np.int8)
+        # Array of all outcomes
+        self.outcomes = np.zeros(number_of_trials, dtype=np.int8)
+        # Arrays of outcomes for each Alternative on each trial that it was chosen
+        self.alt_a_outcomes = np.zeros(number_of_trials, dtype=np.int8)
+        self.alt_b_outcomes = np.zeros(number_of_trials, dtype=np.int8)
+        # Indexes that count how many times each choice was made.
+        self.choice_indexes = {ALTERNATIVE_A: 0, ALTERNATIVE_B: 0}
+        # Index of current trial
         self.trial_number = 0
-        # List of surprise_t values at each trial
-        self.surprises = []
+        # Array of surprise_t values at each trial
+        self.surprises = np.zeros(number_of_trials, dtype=np.float64)
         # All of CATIE agent parameters
         self.tao = tao
         self.epsilon = epsilon
@@ -74,7 +78,7 @@ class CatieAgent:
         # INERTIA MODE
         # Choose the previous choice again.
         elif np.random.random() <= self.phi:
-            choice = self.previous_choices[-1]
+            choice = self.previous_choices[self.trial_number - 1]
 
         # CONTINGENT AVERAGE MODE
         # In the contingent average (CA) mode, the agent chooses the alternative associated with the higher k-CA,
@@ -100,7 +104,7 @@ class CatieAgent:
         """
         :return: Given the previous choice return the other alternative.
         """
-        return (self.previous_choices[-1] + 1) % 2
+        return (self.previous_choices[self.trial_number - 1] + 1) % 2
 
     def trend(self):
         """
@@ -108,40 +112,40 @@ class CatieAgent:
         bigger then the one preceding it, we choose it ̧otherwise we switch choices.
         :return: The choice corresponding with TREND mode.
         """
-        return self.previous_choices[-1] if self.outcomes[- 1] > self.outcomes[- 2] else self.other_choice()
+        return self.previous_choices[self.trial_number - 1] if self.outcomes[self.trial_number - 1] > self.outcomes[
+            self.trial_number - 2] else self.other_choice()
 
     def contingent_average(self, k, choice):
         """
         The contingent average of the input alternative.
         """
         choice_outcomes = self.alt_a_outcomes if choice else self.alt_b_outcomes
-        # Make sure mean is not done on empty list
-        if not choice_outcomes:
-            choice_outcomes = 0
         if k == 0:
-            return np.mean(choice_outcomes)
+            return np.mean(choice_outcomes[:self.choice_indexes[choice]]) if self.choice_indexes[choice] else 0
         # Get last k choices and outcomes
-        current_contingency = tuple(zip(self.previous_choices[-self.k:], self.outcomes[-self.k:]))
+        current_contingency = tuple(zip(self.previous_choices[self.trial_number - self.k:self.trial_number],
+                                        self.outcomes[self.trial_number - self.k:]))
         # Get appropriate contingency dictionary
         choice_contingencies = self.alt_a_contingencies if choice else self.alt_b_contingencies
         # If contingency already exists in dictionary then return it
         if current_contingency in choice_contingencies:
-            return np.mean(choice_contingencies[current_contingency])
+            index, contingency_values = choice_contingencies[current_contingency]
+            return np.mean(contingency_values[:index])
         # Current contingency does not exist
         if not choice_contingencies:  # If there are no k-length contingencies simply consider the mean
-            return np.mean(choice_outcomes)
+            return np.mean(choice_outcomes[:self.choice_indexes[choice]]) if self.choice_indexes[choice] else 0
         else:
             # The current contingency does not appear, but other contingencies do. In such case the user gets
             # "confused" and chooses one of the other contingencies at random. This scenario return all the possible
             # outcomes of the confusion (which are by definition chosen with uniform probability). Namely, the average
             # of each existing contingent average outcome
-            return np.mean([np.mean(confused_contingency_outcomes) for confused_contingency_outcomes in
-                            choice_contingencies.values()])
+            return np.mean([con_array[1] for con_array in choice_contingencies.values()])
 
     def receive_outcome(self, choice, outcome):
         choice_outcomes = self.alt_a_outcomes if choice else self.alt_b_outcomes
-        choice_outcomes.append(outcome[choice])
-        obs_sd = 0 if self.trial_number < 2 else np.std(choice_outcomes)
+        choice_outcomes[self.choice_indexes[choice]] = outcome[choice]
+        self.choice_indexes[choice] += 1
+        obs_sd = 0 if self.trial_number < 2 else np.std(choice_outcomes[:self.choice_indexes[choice]])
         if obs_sd:  # If standard deviation in positive
             # Expected reward for choice on current trial
             exp_t_i = self.alt_a_contingent_average if choice else self.alt_b_contingent_average
@@ -151,20 +155,22 @@ class CatieAgent:
             surprise_t = 0
 
         # Update history
-        self.surprises.append(surprise_t)
-        self.previous_choices.append(choice)
-        self.outcomes.append(outcome[choice])
-
+        self.surprises[self.trial_number] = surprise_t
+        self.previous_choices[self.trial_number] = choice
+        self.outcomes[self.trial_number] = outcome[choice]
         # Update contingent dictionary
         if 0 < self.k < self.trial_number:
             # Get previous k contingencies (before current trial)
-            current_contingency = tuple(zip(self.previous_choices[-self.k - 1:-1], self.outcomes[-self.k - 1:-1]))
+            current_contingency = tuple(zip(self.previous_choices[self.trial_number - self.k:self.trial_number],
+                                            self.outcomes[self.trial_number - self.k:self.trial_number]))
             choice_contingencies = self.alt_a_contingencies if choice else self.alt_b_contingencies
             if current_contingency not in choice_contingencies:
-                choice_contingencies[current_contingency] = []
-            choice_contingencies[current_contingency].append(outcome)
+                choice_contingencies[current_contingency] = [0, np.zeros(self.number_of_trials)]
+            choice_contingencies[current_contingency][1][choice_contingencies[current_contingency][0]] = outcome[choice]
+            choice_contingencies[current_contingency][0] += 1
 
         self.trial_number += 1
 
     def calculate_p_explore(self):
-        return self.epsilon / 3 * ((1 + self.surprises[-1] + np.mean(self.surprises)) if self.surprises else 1)
+        return self.epsilon / 3 * ((1 + self.surprises[self.trial_number - 1] + np.mean(
+            self.surprises[:self.trial_number])) if self.trial_number else 1)
