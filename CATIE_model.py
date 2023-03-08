@@ -1,5 +1,8 @@
 import numpy as np
 
+CONTINGENCIES_INDEX = 0
+CONTINGENCIES_ARRAY = 1
+
 TAO = 0.29
 EPSILON = 0.30
 PHI = 0.71
@@ -139,7 +142,7 @@ class CatieAgent:
             # "confused" and chooses one of the other contingencies at random. This scenario return all the possible
             # outcomes of the confusion (which are by definition chosen with uniform probability). Namely, the average
             # of each existing contingent average outcome
-            return np.mean([con_array[1] for con_array in choice_contingencies.values()])
+            return np.mean([con_array[CONTINGENCIES_ARRAY] for con_array in choice_contingencies.values()])
 
     def receive_outcome(self, choice, outcome):
         choice_outcomes = self.alt_a_outcomes if choice else self.alt_b_outcomes
@@ -165,9 +168,12 @@ class CatieAgent:
                                             self.outcomes[self.trial_number - self.k:self.trial_number]))
             choice_contingencies = self.alt_a_contingencies if choice else self.alt_b_contingencies
             if current_contingency not in choice_contingencies:
+                # Storing in dictionary index of how many contingencies were seen.
+                # and in the array keep track of the outcomes
                 choice_contingencies[current_contingency] = [0, np.zeros(self.number_of_trials)]
-            choice_contingencies[current_contingency][1][choice_contingencies[current_contingency][0]] = outcome[choice]
-            choice_contingencies[current_contingency][0] += 1
+            index = choice_contingencies[current_contingency][CONTINGENCIES_INDEX]
+            choice_contingencies[current_contingency][CONTINGENCIES_ARRAY][index] = outcome[choice]
+            choice_contingencies[current_contingency][CONTINGENCIES_INDEX] += 1
 
         self.trial_number += 1
 
