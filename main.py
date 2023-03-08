@@ -17,7 +17,7 @@ def reward_func(trial_num, schedule, choice):
         biased_alt = 1
     if (schedule[trial_num] == "2" or schedule[trial_num] == "3") and choice == CATIE_model.ALTERNATIVE_B:
         non_biased_alt = 1
-    return biased_alt, non_biased_alt
+    return non_biased_alt, biased_alt
 
 
 def main():
@@ -26,10 +26,10 @@ def main():
         ca_model = CATIE_model.CatieAgent()
         for i in range(TRIALS):
             choice = ca_model.choose()
-            ca_model.set_reward(reward_func(i, BASIC_SCHEDULE, choice))
+            ca_model.receive_outcome(choice, reward_func(i, BASIC_SCHEDULE, choice))
         iterations.append(ca_model.previous_choices.count(CATIE_model.ALTERNATIVE_A) / TRIALS)
 
-    n, bins, patches = plt.hist(iterations, 50, density=True, facecolor='g', alpha=0.75)
+    plt.hist(iterations, 50, density=True, facecolor='g', alpha=0.75)
     plt.axvline(np.array(iterations).mean(), color='k', linestyle='dashed', linewidth=1)
     min_ylim, max_ylim = plt.ylim()
     plt.text(np.array(iterations).mean() * 1.1, max_ylim * 0.9, 'Mean: {:.3f}'.format(np.array(iterations).mean()))
