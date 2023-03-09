@@ -15,9 +15,9 @@ class CatieAgent:
 
     def __init__(self, number_of_trials, tao=TAO, epsilon=EPSILON, phi=PHI, k=K):
         # Contingent Average value for each choice at each trial
-        self.number_of_trials = number_of_trials
-        self.alt_b_contingent_average = 0
-        self.alt_a_contingent_average = 0
+        self.number_of_trials: int = number_of_trials
+        self.alt_b_contingent_average: int = 0
+        self.alt_a_contingent_average: int = 0
         # Dictionaries containing all k-contingencies so far
         self.alt_a_contingencies = dict()
         self.alt_b_contingencies = dict()
@@ -30,11 +30,11 @@ class CatieAgent:
         self.alt_a_outcomes = np.zeros(number_of_trials, dtype=np.int8)
         self.alt_b_outcomes = np.zeros(number_of_trials, dtype=np.int8)
         # Indexes that count how many times each choice was made.
-        self.choice_indexes = {ALTERNATIVE_A: 0, ALTERNATIVE_B: 0}
+        self.choice_indexes: dict[int, int] = {ALTERNATIVE_A: 0, ALTERNATIVE_B: 0}
         # Index of current trial
-        self.trial_number = 0
+        self.trial_number: int = 0
         # Array of surprise_t values at each trial
-        self.surprises = np.zeros(number_of_trials, dtype=np.float64)
+        self.surprises: np.ndarray = np.zeros(number_of_trials, dtype=np.float64)
         # All of CATIE agent parameters
         self.tao = tao
         self.epsilon = epsilon
@@ -94,7 +94,7 @@ class CatieAgent:
                 # Alternative A if self.alt_a_contingent_average > self.alt_b_contingent_average else Alternative B
                 choice = int(self.alt_a_contingent_average > self.alt_b_contingent_average)
 
-        return choice
+        return int(choice)
 
     @staticmethod
     def random_choice():
@@ -142,9 +142,17 @@ class CatieAgent:
             # "confused" and chooses one of the other contingencies at random. This scenario return all the possible
             # outcomes of the confusion (which are by definition chosen with uniform probability). Namely, the average
             # of each existing contingent average outcome
-            return np.mean([con_array[CONTINGENCIES_ARRAY] for con_array in choice_contingencies.values()])
+            all_contingencies = list(choice_contingencies.values())
+            random_contingency = all_contingencies[np.random.randint(0, len(all_contingencies))]
+            index = random_contingency[CONTINGENCIES_INDEX]
+            contingency_values = random_contingency[CONTINGENCIES_ARRAY]
+            return np.mean(contingency_values[:index])
 
     def receive_outcome(self, choice, outcome):
+        """
+        :param choice:  ALTERNATIVE_A = 1 or ALTERNATIVE_B = 0
+        :param outcome: A tuple (reward_alternative_b, reward_alternative_a)
+        """
         choice_outcomes = self.alt_a_outcomes if choice else self.alt_b_outcomes
         choice_outcomes[self.choice_indexes[choice]] = outcome[choice]
         self.choice_indexes[choice] += 1
@@ -171,7 +179,9 @@ class CatieAgent:
                 # Storing in dictionary index of how many contingencies were seen.
                 # and in the array keep track of the outcomes
                 choice_contingencies[current_contingency] = [0, np.zeros(self.number_of_trials)]
+            # Current index of array containing the current contingency
             index = choice_contingencies[current_contingency][CONTINGENCIES_INDEX]
+            # Assign correct outcome to the index of the array and increment index
             choice_contingencies[current_contingency][CONTINGENCIES_ARRAY][index] = outcome[choice]
             choice_contingencies[current_contingency][CONTINGENCIES_INDEX] += 1
 
