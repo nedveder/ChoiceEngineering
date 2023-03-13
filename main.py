@@ -17,7 +17,7 @@ def sequence_catie_score(reward_schedule, repetitions=100, plot_distribution=Fal
         choices = []
         for reward_target, reward_anti_target in zip(schedule_target, schedule_anti_target):
             choice = catie_agent.choose()
-            outcome = reward_anti_target, reward_target
+            outcome = reward_target, reward_anti_target
             catie_agent.receive_outcome(choice, outcome)
             choices.append(choice)
         biases.append(sum(choices))
@@ -37,7 +37,7 @@ def sequence_catie_score(reward_schedule, repetitions=100, plot_distribution=Fal
         plt.axvline(statistics.mean(biases), color='k', linestyle='dashed', linewidth=1)
         min_ylim, max_ylim = plt.ylim()
         plt.text(statistics.mean(biases) * 1.1, max_ylim * 0.9, 'Mean: {:.2f}'.format(statistics.mean(biases)))
-    return biases, statistics.mean(biases)
+    return biases, np.mean(biases)
 
 
 def valid_one_side_allocation(shuffle=False):
@@ -58,10 +58,10 @@ def catie_naive_optimization_seq():
 
 
 def main():
-    random_test()
-    qlearning_test()
-    catie_test()
-    opt_catie_test()
+    # random_test()
+    # qlearning_test()
+    # catie_test()
+    # opt_catie_test()
     comp_winner_test()
     plt.show()
 
@@ -79,7 +79,7 @@ def comp_winner_test():
                                  0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0.,
                                  0., 0., 0., 1., 0., 0., 1., 0., 1., 0., 1., 0., 0., 1., 0., 1., 0.,
                                  1., 1., 0., 0., 1., 1., 0., 1., 1., 0., 1., 1., 1., 1., 1.]))
-    mean_bias_optimized = sequence_catie_score(winner_schedule, 1000, True, True)[1]
+    mean_bias_optimized = sequence_catie_score(winner_schedule, 1000, True)[1]
 
 
 def opt_catie_test():
