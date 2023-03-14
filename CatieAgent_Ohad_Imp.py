@@ -24,7 +24,7 @@ CHOICE_ANTI_BIASED = 0
 
 def choose_randomly():
     """ Return either of the alternatives with 50% chance """
-    if random.random() < 0.5:
+    if np.random.random() < 0.5:
         choice = CHOICE_BIASED
     else:
         choice = CHOICE_ANTI_BIASED
@@ -219,15 +219,13 @@ class CatieAgent:
             probability_of_entering_ca_mode = probability_of_trying_inertia_mode * (1 - self.phi)
             if not self.outcomes_biased or not self.outcomes_anti_biased:  # If one of the alternatives was not sampled yet
                 # Then "exploit" means continue choosing the already chosen alternative
-                contingency_mode_biased_probability = probability_of_entering_ca_mode if self.outcomes_biased else 0
+                contingency_mode_biased_probability = probability_of_entering_ca_mode if self.outcomes_biased else 1-probability_of_entering_ca_mode
             else:
                 if self.k > 0:
                     all_contingencies_probabilities = [biased_side_p_for_ca(ca_biased, ca_anti_biased)
                                                        for ca_biased in self.__contingent_average(self.k, CHOICE_BIASED)
-                                                       for ca_anti_biased in
-                                                       self.__contingent_average(self.k, CHOICE_ANTI_BIASED)]
-                    contingency_mode_biased_probability = probability_of_entering_ca_mode * np.mean(
-                        all_contingencies_probabilities)
+                                                       for ca_anti_biased in self.__contingent_average(self.k, CHOICE_ANTI_BIASED)]
+                    contingency_mode_biased_probability = probability_of_entering_ca_mode * np.mean(all_contingencies_probabilities)
                 else:
                     target_mean, anti_target_mean = np.mean(self.outcomes_biased), np.mean(self.outcomes_anti_biased)
                     if target_mean == anti_target_mean:  # If the two alternative means are equal, choose randomly
@@ -271,12 +269,11 @@ class CatieAgent:
         if choice == CHOICE_BIASED:
             choice_probability = self.target_side_choice_probability
             self.outcomes_biased.append(outcome)
-            obs_sd = 0 if len(self.outcomes_biased) < 2 else statistics.stdev(
-                self.outcomes_biased)  # stddv is only defined for 2 or more numbers
+            obs_sd = 0 if len(self.outcomes_biased) < 2 else np.std(self.outcomes_biased)  # stddv is only defined for 2 or more numbers
         elif choice == CHOICE_ANTI_BIASED:
             choice_probability = 1 - self.target_side_choice_probability
             self.outcomes_anti_biased.append(outcome)
-            obs_sd = 0 if len(self.outcomes_anti_biased) < 2 else statistics.stdev(self.outcomes_anti_biased)
+            obs_sd = 0 if len(self.outcomes_anti_biased) < 2 else np.std(self.outcomes_anti_biased)
         self.actions_likelihood *= choice_probability
         if obs_sd > 0:
             # exp_t_i is the expected value the user excepts to get at trial t after choosing i (the variable choice
@@ -300,13 +297,14 @@ class CatieAgent:
         self.history.append(trial_to_history(choice, outcome))
 
         # Update contingent dictionary
-        if self.k > 0 and len(self.choices) > self.k:
+        if 0 < self.k < len(self.choices):
             current_contingency = tuple(
                 self.history[-self.k - 1:-1])  # Get previous k contingencies (before current trial)
             choice_contingencies = self.biased_contingencies if choice == CHOICE_BIASED else self.anti_biased_contingencies
             if current_contingency not in choice_contingencies:
                 choice_contingencies[current_contingency] = []
             choice_contingencies[current_contingency].append(outcome)
+
         self.trial_number += 1
 
 
@@ -323,13 +321,13 @@ def sequence_catie_score(reward_schedule,
     for i in tqdm.trange(repetitions):
         catie_agent = CatieAgent()
         choices = []
-        for reward_targe, reward_anti_target in zip(
-                schedule_target, schedule_anti_target):
+        for t, (reward_targe, reward_anti_target) in enumerate(zip(
+                schedule_target, schedule_anti_target)):
             choice = catie_agent.choose()
             outcome = reward_targe if choice == CHOICE_BIASED else reward_anti_target
             catie_agent.receive_outcome(choice, outcome)
             choices.append(choice)
-        biases.append(choices.count(CHOICE_BIASED))
+        biases.append(sum(choices))
     if plot_sequence:
         plt.plot([i + 1 for i in range(100) if reward_schedule[0][i]], 2 * np.ones(25), 'x')
         plt.plot([i + 1 for i in range(100) if reward_schedule[1][i]], np.ones(25), 'x')
@@ -339,13 +337,16 @@ def sequence_catie_score(reward_schedule,
         plt.yticks([1, 2], ['Anti side', 'Target side'])
     if plot_distribution:
         plt.figure()
-        plt.hist(biases, alpha=0.5, density=True)
+        plt.hist(biases, color='powderblue', alpha=0.5, density=True)
         plt.ylabel('Probability')
         plt.xlabel('Bias')
         plt.axvline(statistics.mean(biases), color='k', linestyle='dashed', linewidth=1)
         min_ylim, max_ylim = plt.ylim()
-        plt.text(statistics.mean(biases) * 1.1, max_ylim * 0.9, 'Mean: {:.2f}'.format(statistics.mean(biases)))
+        plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.95, 'Mean: {:.3f}'.format(statistics.mean(biases)))
     return biases, statistics.mean(biases)
+
+
+N = 1000
 
 
 def test_catie_opt():
@@ -354,17 +355,6 @@ def test_catie_opt():
     and at the end of the anti target). As sanity check, test the bias distribution of sending the optimized sequence
     where the target is anti targer and vice versa (should be symmetric around 50).
     """
-    optimized_switched = np.array(
-        [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-         0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-         0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0.,
-         0., 0., 0., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 0., 1., 1., 1., 1.,
-         0., 1., 1., 1.]), np.array(
-        [1., 1., 1., 1., 1., 1., 1., 1., 0., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 0.,
-         0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0.,
-         0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-         0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1.,
-         0., 0., 0., 0., ])
     optimized = np.array(
         [1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
          1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
@@ -377,8 +367,11 @@ def test_catie_opt():
          0., 0., 0., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
          1., 1., 1., 1.])
 
-    mean_bias_optimized = sequence_catie_score(optimized, 1000, True)[1]
-    mean_bias_optimized_switched = sequence_catie_score(optimized_switched, 1000, True)[1]
+    mean_bias_optimized = sequence_catie_score(optimized, N, True)
+    plt.title("CATIE Static Naive Ohad's implementation(Post-fix)")
+    plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.9,
+             f'error: +/-{statistics.pstdev(mean_bias_optimized[0]) / N:.3f}%')
+    plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.85, f'N: {N}')
 
 
 def comp_winner_test():
@@ -394,10 +387,16 @@ def comp_winner_test():
                                  0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0.,
                                  0., 0., 0., 1., 0., 0., 1., 0., 1., 0., 1., 0., 0., 1., 0., 1., 0.,
                                  1., 1., 0., 0., 1., 1., 0., 1., 1., 0., 1., 1., 1., 1., 1.]))
-    mean_bias_optimized = sequence_catie_score(winner_schedule, 1000, True)[1]
+    mean_bias_optimized = sequence_catie_score(winner_schedule, N, True)
+    plt.title("CATIE Static Winner Ohad's implementation(Post-fix)")
+    plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.9,
+             f'error: +/-{statistics.pstdev(mean_bias_optimized[0]) / np.sqrt(N):.3f}%')
+    plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.85, f'N: {N}')
 
 
 if __name__ == '__main__':
     np.random.seed(1)
+    random.seed(1)
+    test_catie_opt()
     comp_winner_test()
     plt.show()

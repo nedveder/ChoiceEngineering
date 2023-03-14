@@ -1,3 +1,4 @@
+import random
 import statistics
 
 import numpy as np
@@ -47,7 +48,7 @@ class CatieAgent:
         self.tao = tao
         self.epsilon = epsilon
         self.phi = phi
-        self.k = np.random.randint(0, k + 1)
+        self.k = random.randint(0, k)
         self.trend = 0
 
     def choose(self):
@@ -78,18 +79,18 @@ class CatieAgent:
         # TAO we enter the TREND mode.
         elif self.previous_choices[self.trial_number - 1] == self.previous_choices[self.trial_number - 2] \
                 and self.outcomes[self.trial_number - 1] != self.outcomes[self.trial_number - 2] \
-                and np.random.random() <= self.tao:
+                and random.random() < self.tao:
             choice = self.get_trend()
 
         # EXPLORE MODE
         # Explore is entered with probability p_explore which is determined using calculate_p_explore method at
         # each trial. Explore mode means choosing at random from both alternatives.
-        elif np.random.random() <= self.get_p_explore():
+        elif random.random() < self.get_p_explore():
             choice = self.random_choice()
 
         # INERTIA MODE
         # Choose the previous choice again.
-        elif np.random.random() <= self.phi:
+        elif random.random() < self.phi:
             choice = self.previous_choices[self.trial_number - 1]
 
         # CONTINGENT AVERAGE MODE
@@ -110,7 +111,7 @@ class CatieAgent:
         """
         :return: A random choice between the two alternatives.
         """
-        return np.random.randint(0, 2)  # random choice between Alternative A or Alternative B
+        return random.randint(0, 1)  # random choice between Alternative A or Alternative B
 
     def other_choice(self):
         """
@@ -153,15 +154,20 @@ class CatieAgent:
             return np.mean(contingency_values[:index])
         # Current contingency does not exist
         if not choice_contingencies:
-            # If there are no contingencies of length k that are followed by "choice", a smaller k is chosen iteratively
-            return self.contingent_average(k - 1, choice)
+            # If there are no k-length contingencies simply consider the mean
+            return [np.mean(choice_outcomes[:self.choice_indexes[choice]])] if self.choice_indexes[choice] else 0
         else:
             # The current contingency does not appear, but other contingencies do. In such case the user gets
-            # "confused" and chooses one of the other contingencies at random. This scenario return all the possible
-            # outcomes of the confusion (which are by definition chosen with uniform probability). Namely, the average
-            # of each existing contingent average outcome
+            # "confused" and chooses one of the other contingencies at random. When contingencies seen more will have a
+            # higher outcome probability.
             all_contingencies = list(choice_contingencies.values())
-            random_contingency = all_contingencies[np.random.randint(0, len(all_contingencies))]
+            total_contingencies = sum(i for (i, r) in choice_contingencies.values())
+            random_contingency_index = random.randint(0, total_contingencies)
+            i = 0
+            while all_contingencies[i][0] < random_contingency_index:
+                random_contingency_index -= all_contingencies[i][0]
+                i += 1
+            random_contingency = all_contingencies[i]
             index = random_contingency[CONTINGENCIES_INDEX]
             contingency_values = random_contingency[CONTINGENCIES_ARRAY]
             return np.mean(contingency_values[:index])
@@ -171,8 +177,13 @@ class CatieAgent:
         :param choice:  ALTERNATIVE_A = 1 or ALTERNATIVE_B = 0
         :param outcome: A tuple (reward_alternative_b, reward_alternative_a)
         """
-        choice_outcomes = self.alt_a_outcomes if choice else self.alt_b_outcomes
-        choice_outcomes[self.choice_indexes[choice]] = outcome[(choice + 1) % 2]
+        if choice == ALTERNATIVE_A:
+            choice_outcomes = self.alt_a_outcomes
+            self.alt_a_outcomes[self.choice_indexes[choice]] = outcome[(choice + 1) % 2]
+        else:
+            choice_outcomes = self.alt_b_outcomes
+            self.alt_b_outcomes[self.choice_indexes[choice]] = outcome[(choice + 1) % 2]
+
         self.choice_indexes[choice] += 1
         obs_sd = 0 if self.trial_number < 2 else np.std(choice_outcomes[:self.choice_indexes[choice]])
         if obs_sd:  # If standard deviation in positive
@@ -204,13 +215,14 @@ class CatieAgent:
 
         self.trial_number += 1
 
-    def get_current_k_contingency(self):
-        return tuple(zip(self.previous_choices[self.trial_number - self.k:self.trial_number],
-                         self.outcomes[self.trial_number - self.k:]))
+    def get_current_k_contingency(self, k=None):
+        k = self.k if k is None else k
+        return tuple(zip(self.previous_choices[self.trial_number - k:self.trial_number],
+                         self.outcomes[self.trial_number - k:self.trial_number]))
 
     def get_p_explore(self):
-        return self.epsilon / 3 * ((1 + self.surprises[self.trial_number - 1] + np.mean(
-            self.surprises[:self.trial_number])) if self.trial_number else 1)
+        return self.epsilon / 3 * ((1 + self.surprises[self.trial_number - 1] +
+                                    np.mean(self.surprises[:self.trial_number])) if self.trial_number else 1)
 
     def get_last_choice(self):
         if self.trial_number == 0:
@@ -230,7 +242,7 @@ def sequence_catie_score(reward_schedule, repetitions=100, plot_distribution=Fal
     for i in tqdm.trange(repetitions):
         catie_agent = CatieAgent()
         choices = []
-        for reward_target, reward_anti_target in zip(schedule_target, schedule_anti_target):
+        for t, (reward_target, reward_anti_target) in enumerate(zip(schedule_target, schedule_anti_target)):
             choice = catie_agent.choose()
             outcome = reward_target, reward_anti_target
             catie_agent.receive_outcome(choice, outcome)
@@ -246,13 +258,16 @@ def sequence_catie_score(reward_schedule, repetitions=100, plot_distribution=Fal
         plt.yticks([1, 2], ['Anti side', 'Target side'])
     if plot_distribution:
         plt.figure()
-        plt.hist(biases, alpha=0.5, density=True)
+        plt.hist(biases, color='royalblue', alpha=0.5, density=True)
         plt.ylabel('Probability')
         plt.xlabel('Bias')
         plt.axvline(statistics.mean(biases), color='k', linestyle='dashed', linewidth=1)
         min_ylim, max_ylim = plt.ylim()
-        plt.text(statistics.mean(biases) * 1.1, max_ylim * 0.9, 'Mean: {:.2f}'.format(statistics.mean(biases)))
+        plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.95, 'Mean: {:.3f}'.format(statistics.mean(biases)))
     return biases, statistics.mean(biases)
+
+
+N = 1000
 
 
 def test_catie_opt():
@@ -261,17 +276,6 @@ def test_catie_opt():
     and at the end of the anti target). As sanity check, test the bias distribution of sending the optimized sequence
     where the target is anti targer and vice versa (should be symmetric around 50).
     """
-    optimized_switched = np.array(
-        [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-         0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-         0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0.,
-         0., 0., 0., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 0., 1., 1., 1., 1.,
-         0., 1., 1., 1.]), np.array(
-        [1., 1., 1., 1., 1., 1., 1., 1., 0., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 0.,
-         0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0.,
-         0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-         0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1.,
-         0., 0., 0., 0., ])
     optimized = np.array(
         [1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
          1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
@@ -284,8 +288,11 @@ def test_catie_opt():
          0., 0., 0., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
          1., 1., 1., 1.])
 
-    mean_bias_optimized = sequence_catie_score(optimized, 1000, True)[1]
-    mean_bias_optimized_switched = sequence_catie_score(optimized_switched, 1000, True)[1]
+    mean_bias_optimized = sequence_catie_score(optimized, N, True)
+    plt.title("CATIE Static Naive Nadav's implementation")
+    plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.9,
+             f'error: +/-{statistics.pstdev(mean_bias_optimized[0]) / N:.3f}%')
+    plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.85, f'N: {N}')
 
 
 def comp_winner_test():
@@ -301,10 +308,16 @@ def comp_winner_test():
                                  0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0.,
                                  0., 0., 0., 1., 0., 0., 1., 0., 1., 0., 1., 0., 0., 1., 0., 1., 0.,
                                  1., 1., 0., 0., 1., 1., 0., 1., 1., 0., 1., 1., 1., 1., 1.]))
-    mean_bias_optimized = sequence_catie_score(winner_schedule, 1000, True)[1]
+    mean_bias_optimized = sequence_catie_score(winner_schedule, N, True)
+    plt.title("CATIE Static Winner Nadav's implementation")
+    plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.9,
+             f'error: +/-{statistics.pstdev(mean_bias_optimized[0]) / np.sqrt(N):.3f}%')
+    plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.85, f'N: {N}')
 
 
 if __name__ == '__main__':
     np.random.seed(1)
+    random.seed(1)
+    test_catie_opt()
     comp_winner_test()
     plt.show()
