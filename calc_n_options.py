@@ -32,11 +32,12 @@ def assignments_per_turn(t, rr, lr, choices_per_reward):
 def different_choices(t, rr, lr, choices_per_reward, allocation):
     # For each assignment the Agent has two different choices which effect the dynamic scheduling and the agent choice
     # doesn't make a difference when static schedule
+    if t == 1:
+        return assignments_per_turn(t, rr, lr, choices_per_reward)
     return choices_per_reward * assignments_per_turn(t, rr, lr, choices_per_reward)
 
 
 if __name__ == '__main__':
     N_TRIALS = 100
     N_REWARDS = 25
-    print(f"Number of static schedules: \n{assignments_per_turn(N_TRIALS, N_REWARDS, N_REWARDS, 1)}")
     print(f"Number of dynamic schedules: \n{assignments_per_turn(N_TRIALS, N_REWARDS, N_REWARDS, 2)}")

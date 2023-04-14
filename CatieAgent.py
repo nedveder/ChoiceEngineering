@@ -1,6 +1,5 @@
 import random
 import statistics
-
 import numpy as np
 import tqdm
 from matplotlib import pyplot as plt
@@ -155,19 +154,13 @@ class CatieAgent:
         # Current contingency does not exist
         if not choice_contingencies:
             # If there are no k-length contingencies simply consider the mean
-            return [np.mean(choice_outcomes[:self.choice_indexes[choice]])] if self.choice_indexes[choice] else 0
+            return np.mean(choice_outcomes[:self.choice_indexes[choice]]) if self.choice_indexes[choice] else 0
         else:
             # The current contingency does not appear, but other contingencies do. In such case the user gets
             # "confused" and chooses one of the other contingencies at random. When contingencies seen more will have a
             # higher outcome probability.
             all_contingencies = list(choice_contingencies.values())
-            total_contingencies = sum(i for (i, r) in choice_contingencies.values())
-            random_contingency_index = random.randint(0, total_contingencies)
-            i = 0
-            while all_contingencies[i][0] < random_contingency_index:
-                random_contingency_index -= all_contingencies[i][0]
-                i += 1
-            random_contingency = all_contingencies[i]
+            random_contingency = all_contingencies[np.random.randint(0, len(all_contingencies))]
             index = random_contingency[CONTINGENCIES_INDEX]
             contingency_values = random_contingency[CONTINGENCIES_ARRAY]
             return np.mean(contingency_values[:index])
@@ -235,6 +228,9 @@ class CatieAgent:
         """
         return self.alt_a_contingent_average, self.alt_b_contingent_average
 
+    def get_bias(self):
+        return self.previous_choices.sum() / 100
+
 
 def sequence_catie_score(reward_schedule, repetitions=100, plot_distribution=False, plot_sequence=False):
     schedule_target, schedule_anti_target = reward_schedule[0], reward_schedule[1]
@@ -246,7 +242,8 @@ def sequence_catie_score(reward_schedule, repetitions=100, plot_distribution=Fal
             choice = catie_agent.choose()
             outcome = reward_target, reward_anti_target
             catie_agent.receive_outcome(choice, outcome)
-            choices.append(choice)
+            if t == 99:
+                choices.append(choice)
         biases.append(sum(choices))
 
     if plot_sequence:

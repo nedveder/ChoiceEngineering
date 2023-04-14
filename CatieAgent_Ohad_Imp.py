@@ -219,13 +219,15 @@ class CatieAgent:
             probability_of_entering_ca_mode = probability_of_trying_inertia_mode * (1 - self.phi)
             if not self.outcomes_biased or not self.outcomes_anti_biased:  # If one of the alternatives was not sampled yet
                 # Then "exploit" means continue choosing the already chosen alternative
-                contingency_mode_biased_probability = probability_of_entering_ca_mode if self.outcomes_biased else 1-probability_of_entering_ca_mode
+                contingency_mode_biased_probability = probability_of_entering_ca_mode if self.outcomes_biased else 1 - probability_of_entering_ca_mode
             else:
                 if self.k > 0:
                     all_contingencies_probabilities = [biased_side_p_for_ca(ca_biased, ca_anti_biased)
                                                        for ca_biased in self.__contingent_average(self.k, CHOICE_BIASED)
-                                                       for ca_anti_biased in self.__contingent_average(self.k, CHOICE_ANTI_BIASED)]
-                    contingency_mode_biased_probability = probability_of_entering_ca_mode * np.mean(all_contingencies_probabilities)
+                                                       for ca_anti_biased in
+                                                       self.__contingent_average(self.k, CHOICE_ANTI_BIASED)]
+                    contingency_mode_biased_probability = probability_of_entering_ca_mode * np.mean(
+                        all_contingencies_probabilities)
                 else:
                     target_mean, anti_target_mean = np.mean(self.outcomes_biased), np.mean(self.outcomes_anti_biased)
                     if target_mean == anti_target_mean:  # If the two alternative means are equal, choose randomly
@@ -269,7 +271,8 @@ class CatieAgent:
         if choice == CHOICE_BIASED:
             choice_probability = self.target_side_choice_probability
             self.outcomes_biased.append(outcome)
-            obs_sd = 0 if len(self.outcomes_biased) < 2 else np.std(self.outcomes_biased)  # stddv is only defined for 2 or more numbers
+            obs_sd = 0 if len(self.outcomes_biased) < 2 else np.std(
+                self.outcomes_biased)  # stddv is only defined for 2 or more numbers
         elif choice == CHOICE_ANTI_BIASED:
             choice_probability = 1 - self.target_side_choice_probability
             self.outcomes_anti_biased.append(outcome)
@@ -326,7 +329,8 @@ def sequence_catie_score(reward_schedule,
             choice = catie_agent.choose()
             outcome = reward_targe if choice == CHOICE_BIASED else reward_anti_target
             catie_agent.receive_outcome(choice, outcome)
-            choices.append(choice)
+            if t == 99:
+                choices.append(choice)
         biases.append(sum(choices))
     if plot_sequence:
         plt.plot([i + 1 for i in range(100) if reward_schedule[0][i]], 2 * np.ones(25), 'x')

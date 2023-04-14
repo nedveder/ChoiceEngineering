@@ -12,7 +12,7 @@ NUMBER_OF_TRIALS = 100
 # Network constants
 L0_SIZE = 9  # Number of input neurons (reflecting current state, don't change)
 L_MIDDLE_SIZE = 100  # Number of neurons per each of the middle layers (arbitrary, can be changed)
-N_MIDDLE_LAYERS = 2  # Arbitrary, can be changed
+N_MIDDLE_LAYERS = 4  # Arbitrary, can be changed
 # Number of neurons in the output layer, corresponding to the number of possible decisions (don't change)
 L_END_SIZE = 4
 
@@ -69,7 +69,7 @@ def init_nn(n_middle_layers=N_MIDDLE_LAYERS, l_middle_size=L_MIDDLE_SIZE):
 NEURON_TO_ACTION = {0: (0, 0), 1: (1, 0), 2: (0, 1), 3: (1, 1)}
 
 
-def nn_action_selection_for_input(nn, input_activation):
+def nn_action_selection_for_input(nn: np.ndarray, input_activation: np.ndarray):
     activation = input_activation
     for layer in nn:
         activation = np.tanh(np.matmul(activation, layer))
@@ -88,8 +88,9 @@ def get_catie_param(catie_agent):
 def get_input_activation(trial_number=0, allocated_reward_target=0,
                          allocated_reward_anti_target=0, catie_agent=CatieAgent(NUMBER_OF_TRIALS)):
     intercept = [1]
-    return np.concatenate((intercept, [trial_number, allocated_reward_target, allocated_reward_anti_target],
-                           get_catie_param(catie_agent)))
+    a = np.concatenate((intercept, [trial_number, allocated_reward_target, allocated_reward_anti_target],
+                        get_catie_param(catie_agent)))
+    return a
 
 
 def constrain_one_side(allocation, r_remain, trial_number):
@@ -137,7 +138,7 @@ def network_multiple_runs(nn, n_runs=10):
     return biases, np.mean(biases)
 
 
-MUTATION_BASE_RATE = 0.05  # Arbitrary, greater numbers induce greater mutation for each generation
+MUTATION_BASE_RATE = 0.005  # Arbitrary, greater numbers induce greater mutation for each generation
 
 
 def mutate(layer, noise_magnitude=MUTATION_BASE_RATE):
@@ -148,7 +149,7 @@ def mutate(layer, noise_magnitude=MUTATION_BASE_RATE):
     return layer + noise
 
 
-def crossover_and_mutate(nn1, nn2, progress):
+def crossover_and_mutate(nn1, nn2, progress, mutate_rate=MUTATION_BASE_RATE):
     """
     Return the outcome of crossing (choosing weights randomly from each nn) and
     mutating the outcome (just inserting noise).
@@ -159,13 +160,13 @@ def crossover_and_mutate(nn1, nn2, progress):
         indices_from_n1 = np.random.randint(low=0, high=2, size=np.shape(layer_i_1))
         crossover_layer_i = np.where(indices_from_n1, layer_i_1, layer_i_2)
         # Mutate
-        mutation_magnitude = MUTATION_BASE_RATE * (1 - progress)
+        mutation_magnitude = mutate_rate * (1 - progress)
         crossover_mutated_output_layer_i = mutate(crossover_layer_i, mutation_magnitude)
         output_nn.append(crossover_mutated_output_layer_i)
     return output_nn
 
 
-def get_next_generation(nn1, nn2, generation_size, progress):
+def get_next_generation(nn1, nn2, generation_size, progress, mutate_rate):
     """
     Next generation is made of:
       1. One new random set of weights
@@ -177,11 +178,12 @@ def get_next_generation(nn1, nn2, generation_size, progress):
       progress is a variable between 0 and 1 representing what proportion of the
       optimization has been completed (0 indicates just started, 1 means ended)
     """
-    return [init_nn(), nn1, nn2] + [crossover_and_mutate(nn1, nn2, progress) for _ in range(generation_size - 3)]
+    return [init_nn(), nn1, nn2] + [crossover_and_mutate(nn1, nn2, progress, mutate_rate) for _ in
+                                    range(generation_size - 3)]
 
 
 # Where should the data be saved
-NETWORK_NAME = '6 layers network'
+NETWORK_NAME = '6 layers network different mutation rate'
 OUTPUT_PATH = "Data/" + NETWORK_NAME.replace(" ", "_") + ".pickle"
 
 
@@ -198,7 +200,7 @@ def load_network():
 
 
 TEST_REPETITION = 1000
-DEBUG = True
+DEBUG = False
 if DEBUG:
     MIN_OPTIMIZATION_PER_NN = 2
     MAX_OPTIMIZATION_PER_NN = 5
@@ -206,9 +208,9 @@ if DEBUG:
     NUM_OPTIMIZATION_TRIALS = 4
 else:
     MIN_OPTIMIZATION_PER_NN = 100
-    MAX_OPTIMIZATION_PER_NN = 900
+    MAX_OPTIMIZATION_PER_NN = 1000
     GENERATION_SIZE = 10
-    NUM_OPTIMIZATION_TRIALS = 800
+    NUM_OPTIMIZATION_TRIALS = 1000
 
 OPTIMIZATION_PER_REPETITION = np.linspace(MIN_OPTIMIZATION_PER_NN, MAX_OPTIMIZATION_PER_NN, num=NUM_OPTIMIZATION_TRIALS)
 
@@ -217,7 +219,7 @@ def get_two_best_networks(networks_scores):
     return heapq.nlargest(2, range(len(networks_scores)), key=lambda x: networks_scores[x][1])
 
 
-def run_optimization(generation, iteration_start, generation_mean_bias=None):
+def run_optimization(mutate_rate, generation, iteration_start, generation_mean_bias=None):
     t = tqdm.trange(iteration_start, NUM_OPTIMIZATION_TRIALS, desc="Iteration")
     best_nn = None
 
@@ -238,22 +240,22 @@ def run_optimization(generation, iteration_start, generation_mean_bias=None):
                           refresh=True)
         generation_mean_bias[1][i] = bias_distribution_nn_mean
         save_network(best_nn, i, optimization_trials, generation_mean_bias)
-        generation = get_next_generation(generation[best_two_nn_indices[0]],
-                                         generation[best_two_nn_indices[1]],
-                                         GENERATION_SIZE,
-                                         i / NUM_OPTIMIZATION_TRIALS)
+        generation = get_next_generation(nn1=generation[best_two_nn_indices[0]],
+                                         nn2=generation[best_two_nn_indices[1]],
+                                         generation_size=GENERATION_SIZE,
+                                         progress=i / NUM_OPTIMIZATION_TRIALS, mutate_rate=mutate_rate)
     return best_nn, generation_mean_bias
 
 
-def continue_optimization():
+def continue_optimization(mutate_rate):
     best_nn, iteration, generation_mean_bias = load_network()
     generation = [best_nn] + [init_nn() for _ in range(GENERATION_SIZE - 1)]
-    return run_optimization(generation, iteration)
+    return run_optimization(mutate_rate, generation, iteration)
 
 
-def run_optimization_from_scratch():
+def run_optimization_from_scratch(mutate_rate):
     generation = [init_nn() for _ in range(GENERATION_SIZE)]
-    return run_optimization(generation, 0)
+    return run_optimization(mutate_rate, generation, 0)
 
 
 def plot_distribution(dist, color, dist_type):
@@ -280,33 +282,40 @@ def get_static_catie_opt():
 
 
 def main():
-    best_nn, generation_mean_bias = run_optimization_from_scratch()
-    # best_nn, generation_mean_bias = continue_optimization()
+    fig, ax = plt.subplots()
+    color_sequence = ['#ff7f0e']
+    mutation_rates = [0.005]
+    for i, mutate_rate in enumerate(mutation_rates):
+        # best_nn, generation_mean_bias = run_optimization_from_scratch(mutate_rate)
+        best_nn, generation_mean_bias = continue_optimization(mutate_rate)
+        bias_distribution_best_nn, mean_bias_best_nn = network_multiple_runs(best_nn, TEST_REPETITION)
+        ax.plot(generation_mean_bias[0], generation_mean_bias[1], color=color_sequence[i])
+        mutation_rates[i] = (mean_bias_best_nn,
+                             f'error: +/-{statistics.pstdev(bias_distribution_best_nn) / TEST_REPETITION:.3f}%')
+    ax.legend(mutation_rates)
+    ax.set(xlabel='Generation', ylabel='Mean Generation Bias (%)')
+    ax.grid()
+    fig.show()
     plt.figure()
-    bias_distribution_best_nn, mean_bias_best_nn = network_multiple_runs(best_nn, TEST_REPETITION)
+    bias_distribution_naive_optimal_static = plot_schedules(bias_distribution_best_nn)
+    plt.show()
+
+
+def plot_schedules(bias_distribution_best_nn):
     # Plot Dynamic schedule histogram
     dist, dist_mean = plot_distribution(bias_distribution_best_nn, [x / 255 for x in (102, 196, 197)], 'Dynamic')
     plt.text(statistics.mean(dist) * 1.1, plt.ylim()[1] * 0.9, 'mean: {:.2f}'.format(dist_mean))
-
     # Plot static schedule histogram
     bias_distribution_naive_optimal_static, bias_distribution_naive_optimal_static_mean = get_static_catie_opt()
     dist, dist_mean = plot_distribution(bias_distribution_naive_optimal_static, [x / 255 for x in (238, 50, 51)],
                                         'Static')
     plt.text(statistics.mean(dist) * 1.1, plt.ylim()[1] * 0.8, 'mean: {:.2f}'.format(dist_mean))
-
     plt.ylabel('Probability')
     plt.xlabel('Bias')
     plt.legend(('Dynamic', 'Static', 'Dynamic', 'Static'), loc='upper left')
     print(scipy.stats.ttest_ind(bias_distribution_best_nn, bias_distribution_naive_optimal_static))
-    plt.figure()
-    fig, ax = plt.subplots()
-    ax.plot(generation_mean_bias[0], generation_mean_bias[1])
-    ax.set(xlabel='Generation', ylabel='Mean Generation Bias (%)')
-    ax.grid()
-
-    fig.savefig("test.png")
-
     plt.show()
+    return bias_distribution_naive_optimal_static
 
 
 if __name__ == '__main__':
