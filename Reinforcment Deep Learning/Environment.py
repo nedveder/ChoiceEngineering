@@ -36,8 +36,10 @@ class CatieAgentEnv(gym.Env):
         self.trial_number = 0
         self.max_trials = number_of_trials
         self.assignments = [0, 0]
-        self.observation_space = spaces.Tuple((spaces.MultiDiscrete(np.ones(number_of_trials) * 3),
-                                               spaces.Discrete(self.max_trials)))
+        # [trend, p_explore, last_choice, biased_ca, anti_biased_ca,self.assignments, self.trial_number]
+        self.observation_space = spaces.Tuple([spaces.Discrete(3, start=-1), spaces.Box(0, 1)
+                                                  , spaces.Discrete(2), spaces.Box(0, 1), spaces.Box(0, 1)
+                                                  , spaces.MultiDiscrete([100, 100]), spaces.Discrete(100)])
 
     def reset(self, *, seed=None, options=None, ):
         self.agent = CatieAgent()

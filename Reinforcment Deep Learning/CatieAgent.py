@@ -168,7 +168,7 @@ class CatieAgent:
     def receive_outcome(self, choice, outcome):
         """
         :param choice:  ALTERNATIVE_A = 1 or ALTERNATIVE_B = 0
-        :param outcome: A tuple (reward_alternative_b, reward_alternative_a)
+        :param outcome: A tuple (reward_alternative_b 1 or 0, reward_alternative_a 1 or 0)
         """
         if choice == ALTERNATIVE_A:
             choice_outcomes = self.alt_a_outcomes
@@ -229,7 +229,7 @@ class CatieAgent:
         return self.alt_a_contingent_average, self.alt_b_contingent_average
 
     def get_bias(self):
-        return self.previous_choices.sum() / 100
+        return self.previous_choices.sum()
 
     def get_catie_param(self):
         trend = self.trend
