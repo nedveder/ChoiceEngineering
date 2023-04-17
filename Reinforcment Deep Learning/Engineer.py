@@ -1,38 +1,88 @@
-import random
+from typing import List, Optional, Tuple, Dict, Union
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
+
 import gymnasium as gym
 from gymnasium import spaces
+from gymnasium.core import RenderFrame
+from gymnasium.utils.env_checker import check_env
+
 import numpy as np
-from CatieAgent import CatieAgent
 import matplotlib.pyplot as plt
-import pickle
-import torch.nn.functional as F
+
+from CatieAgent import CatieAgent
+
+from skopt import gp_minimize
+from skopt.space import Real, Integer, Categorical
+from skopt.utils import use_named_args
 
 ALLOCATION_DICT = {0: (0, 0), 1: (1, 0), 2: (0, 1), 3: (1, 1)}
 DEALLOCATION_DICT = {(0, 0): 0, (1, 0): 1, (0, 1): 2, (1, 1): 3}
 
 
 class CatieAgentEnv(gym.Env):
-    def __init__(self, number_of_trials=100):
+    """
+    Custom environment for the CatieAgent, which inherits from gym.Env.
+    """
+
+    def __init__(self, number_of_trials: int = 100) -> None:
+        """
+        Initialize the CatieAgentEnv.
+
+        Args:
+            number_of_trials (int): The number of trials to run. Defaults to 100.
+        """
         self.agent = CatieAgent(number_of_trials=number_of_trials)
         self.action_space = spaces.MultiBinary(2)
         self.trial_number = 0
         self.max_trials = number_of_trials
         self.assignments = [0, 0]
-        self.observation_space = spaces.Tuple([spaces.Discrete(3, start=-1), spaces.Box(0, 1)
-                                                  , spaces.Discrete(2), spaces.Box(0, 1), spaces.Box(0, 1)
-                                                  , spaces.MultiDiscrete([100, 100]), spaces.Discrete(100)])
+        self.observation_space = spaces.Tuple([spaces.Box(0, 1, dtype=np.float64),  # TAO
+                                               spaces.Box(0, 1, dtype=np.float64),  # PHI
+                                               spaces.Box(0, 1, dtype=np.float64),  # EPSILON
+                                               spaces.Discrete(4, start=-1),  # K
+                                               spaces.Discrete(3, start=-1),  # trend
+                                               spaces.Box(0, 1, dtype=np.float64),  # p_explore
+                                               spaces.Discrete(3, start=-1),  # last_choice
+                                               spaces.Box(0, 1, dtype=np.float64),  # biased_ca
+                                               spaces.Box(0, 1, dtype=np.float64),  # anti_biased_ca
+                                               spaces.MultiDiscrete([100, 100]),  # Assignments to each alternative
+                                               spaces.Discrete(100)])  # Trial number
 
-    def reset(self, *, seed=None, options=None, ):
+    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[Tuple, Dict]:
+        """
+        Reset the environment to its initial state.
+
+        Args:
+            seed (int, optional): A random seed for reproducibility. Defaults to None.
+            options (dict, optional): Additional options for resetting. Defaults to None.
+
+        Returns:
+            observation (tuple): The initial observation of the environment after reset.
+            info (dict): An empty dictionary.
+        """
         self.agent = CatieAgent()
         self.trial_number = 0
         self.assignments = [0, 0]
-        observation = self.agent.get_catie_param(), self.assignments, self.trial_number
-        return observation, {}
+        observation = *self.agent.get_catie_param(), self.assignments, self.trial_number
+        return observation, {}  # TODO Fix observations types
 
-    def step(self, action):
+    def step(self, action: Tuple[int, int]) -> Tuple[Tuple, int, bool, Dict]:
+        """
+        Take a step in the environment based on the provided action.
+
+        Args:
+            action (tuple): A tuple representing the action to take.
+
+        Returns:
+            observation (tuple): The current observation of the environment after the action.
+            reward (int): The reward for the taken action.
+            done (bool): A flag indicating whether the environment has reached a terminal state.
+            info (dict): An empty dictionary.
+        """
         choice = self.agent.choose()
         self.agent.receive_outcome(choice, action)
         self.assignments[0] += action[0]
@@ -56,38 +106,91 @@ class CatieAgentEnv(gym.Env):
 
         return observation, reward, done, {}
 
-    def compute_reward(self):
+    def compute_reward(self) -> int:
+        """
+        Compute the reward for the agent based on the current state.
+
+        Returns: Bias of all choices made by current CatieAgent
+        """
         return self.agent.get_bias()
 
+    def render(self) -> Optional[Union[RenderFrame, List[RenderFrame]]]:
+        return None
 
-# Define the recurrent policy network
+
 class PolicyNet(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
+    def __init__(self, input_size: int, hidden_size: int, output_size: int, activation_function: callable):
+        """
+        Initialize the PolicyNet neural network.
+
+        Args:
+            input_size (int): The number of input features.
+            hidden_size (int): The size of the hidden layers.
+            output_size (int): The number of output features.
+            activation_function (callable): The activation function to be used in the hidden layers.
+        """
         super(PolicyNet, self).__init__()
         self.fc = nn.Sequential(nn.Linear(input_size, hidden_size),
-                                nn.ReLU(),
-                                nn.Linear(hidden_size, hidden_size),
-                                nn.ReLU(),
+                                activation_function(),
+                                *([nn.Linear(hidden_size, hidden_size), activation_function()] * HIDDEN_LAYERS),
                                 nn.Linear(hidden_size, output_size))
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Perform a forward pass through the PolicyNet neural network.
+
+        Args:
+            x (torch.Tensor): The input tensor.
+
+        Returns:
+            torch.Tensor: The output tensor.
+        """
         out = self.fc(x)
         return out
 
 
 # Define the agent class
 class Agent:
-    def __init__(self, env, input_size, hidden_size, output_size, lr):
-        self.env = env
-        self.policy_net = PolicyNet(input_size, hidden_size, output_size)
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
+    """
+    An Agent class that trains a reinforcement learning policy using the REINFORCE algorithm.
+    """
 
-    def select_action(self, state):
+    def __init__(self, env, input_size: int, hidden_size: int, output_size: int, lr: float, epsilon: float,
+                 activation_function: callable) -> None:
+        """
+        Initialize the Agent.
+        Args:
+            env: The environment in which the agent operates.
+            input_size (int): The size of the input layer for the policy network.
+            hidden_size (int): The size of the hidden layer for the policy network.
+            output_size (int): The size of the output layer for the policy network.
+            lr (float): The learning rate for the optimizer.
+            epsilon (float): The exploration rate for the epsilon-greedy strategy.
+            activation_function (str): The activation function for the policy network.
+        """
+        self.env = env
+        self.policy_net = PolicyNet(input_size, hidden_size, output_size, activation_function)
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
+        self.max_fitness = 0
+        self.epsilon = epsilon
+
+    def select_action(self, state: Tuple[np.ndarray, Tuple[int, int], int]) -> torch.Tensor:
+        """
+        Select an action using the epsilon-greedy strategy.
+
+        Args:
+            state (tuple): A tuple containing three elements: catie_params (numpy array), assignments (tuple),
+                           and trial (int).
+
+        Returns:
+            torch.Tensor: A tensor representing the constrained action probabilities.
+        """
         catie_params, assignments, trial = state
         state_tensor = torch.Tensor(np.concatenate((catie_params, [trial, assignments[0], assignments[1]])))
         action_probs = self.policy_net(state_tensor)
         action_probs = nn.functional.softmax(action_probs, dim=-1)
-        # Create a mask for valid actions
+
+        # Create a mask for valid actions - CONSTRAINTS
         mask = torch.FloatTensor([1.0, 1.0, 1.0, 1.0])
         add_mask = torch.FloatTensor([1e-8, 0.0, 0.0, 0.0])
         if assignments[0] >= 25:
@@ -98,25 +201,48 @@ class Agent:
             mask[3] = 0
 
         # Apply the mask to the action probabilities
-        constrained_probs = (action_probs + add_mask) * mask
-        constrained_probs = constrained_probs / (constrained_probs.sum())
+        constrained_probs = ((action_probs + add_mask) * mask) / (((action_probs + add_mask) * mask).sum())
+
+        # epsilon-greedy implementation
+        if np.random.rand() < self.epsilon:
+            valid_indices = np.argwhere(mask.numpy() > 0).flatten()
+            random_action = np.random.choice(valid_indices)
+            return constrained_probs * 0 + torch.eye(4)[random_action]
+
         return constrained_probs
 
-    def train(self, num_episodes, n_rep):
-        plt.figure(figsize=(10, 5))
+    def train(self, n_episodes: int, n_rep: int, network_path: Optional[str] = None) -> None:
+        """
+        Train the agent using the REINFORCE algorithm.
+
+        Args:
+            n_episodes (int): The number of episodes to run the REINFORCE algorithm.
+            n_rep (int): The number of iterations to run the CatieAgent on each policy.
+                         Higher values result in less variance in the bias mean returned as a reward,
+                         which in turn is used to calculate loss.
+            network_path (str, optional): The file path to load the current network from. Defaults to None.
+        """
+        # INIT TRAINING SESSION
+        self.load_network(network_path)
         episode_rewards = []
-        rep_rewards = []
-        rep_per_episode = np.arange(n_rep, num_episodes)
-        top_bias = 0
-        for i in range(num_episodes):
+        episode_rewards_std = []
+        episode_loss = []
+        rep_per_episode = np.arange(n_rep, n_rep + n_episodes) if INCREASING_REPS else n_rep
+
+        # TRAINING LOOP
+        for j in range(n_episodes):
+            # Update the policy network
+            self.optimizer.zero_grad()  # TODO possibly move this to loop beginning
             action_probs = []
-            for _ in range(rep_per_episode[i]):
+            rep_rewards = []
+
+            # REPETITIONS FOR INCREASED ACCURACY IN RESULTS
+            for _ in range(rep_per_episode[j]):
                 episode_reward = 0
                 actions = []
-                rep_rewards = []
                 state, _ = self.env.reset()
                 action_probs_rep = []
-                for _ in range(100):
+                for _ in range(N_TRIALS):
                     action_prob = self.select_action(state)
                     action_probs_rep.append(action_prob)
                     action = ALLOCATION_DICT[torch.multinomial(action_prob, num_samples=1).item()]
@@ -127,65 +253,203 @@ class Agent:
 
                     if done:
                         break
-
-                    state = next_state
+                    else:
+                        state = next_state
 
                 action_probs.append(
                     torch.stack(action_probs_rep + [torch.mean(torch.stack(action_probs_rep), dim=0) for _ in
-                                                    range(100 - len(action_probs_rep))]))
+                                                    range(N_TRIALS - len(action_probs_rep))]))
                 rep_rewards.append(episode_reward)
 
-            episode_rewards.append(np.mean(rep_rewards))
             # Calculate the episode return (discounted sum of rewards)
             G = torch.Tensor([np.mean(rep_rewards)])
-            padded_action_probs = torch.stack(
-                action_probs + [torch.mean(torch.stack(action_probs), dim=0) for _ in range(100 - len(action_probs))])
+
+            padding = [torch.mean(torch.stack(action_probs), dim=0) for _ in range(N_TRIALS - len(action_probs))]
+            padded_action_probs = torch.stack(action_probs + padding)
             action_probs_mean = torch.mean(padded_action_probs, dim=0)
-            # Update the policy network
-            self.optimizer.zero_grad()
+
+            # Calculate the entropy regularization term
+            entropy_reg = torch.sum(action_probs_mean * torch.log(action_probs_mean + 1e-6))
 
             # Add the MSE loss term to penalize the difference between G and the target value
-            mse_loss = F.mse_loss(G, torch.tensor([100], dtype=torch.float32))
+            mse_loss = F.mse_loss(G, torch.tensor([N_TRIALS], dtype=torch.float64))
 
-            loss = -mse_loss * torch.sum(torch.log(action_probs_mean + 1e-6) * 0.01)
-            ##
-            if np.mean(rep_rewards) > top_bias:
-                top_bias = np.mean(rep_rewards)
-                print(f"Top Network:{top_bias} Loss:{loss} Iterations:{rep_per_episode[i]}")
-                with open('policy_net.pkl', 'wb') as file:
-                    torch.save(self.policy_net.state_dict(), file)
-            ##
+            # Add the entropy regularization term to the loss function
+            loss = mse_loss + 0.01 * entropy_reg
+
+            # Keep track of loss and rewards over time
+            episode_rewards.append(np.mean(rep_rewards))
+            episode_rewards_std.append(np.std(rep_rewards))
+            episode_loss.append(float(loss))
+
+            # Save highest fitness network so far
+            if np.mean(rep_rewards) > self.max_fitness:
+                self.max_fitness = np.mean(rep_rewards)
+                self.save_network(loss, rep_per_episode[j])
+
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), 1.0)
             self.optimizer.step()
 
-            # Print progress
-            if i % 100 == 0:
-                print('Episode %d: reward = %d' % (i, episode_rewards[i]), loss)
-                # Update the live plot
-                plt.plot(episode_rewards)
-                plt.xlabel('Episode')
-                plt.ylabel('Reward')
-                plt.title('Training Rewards')
-                plt.show()
+            self.plot_training_progress(episode_loss, episode_rewards, episode_rewards_std, j, loss)
+
+    def load_network(self, network_path: Optional[str]) -> None:
+        """
+        Load the saved policy network state from the specified file path.
+
+        Args:
+            network_path (str, optional): The file path to the saved network state.
+        """
+        if network_path:
+            with open(network_path, 'rb') as file:
+                self.policy_net.load_state_dict(torch.load(file))
+
+    def save_network(self, loss: float, cur_reps: int) -> None:
+        """
+        Save the current policy network state to a file.
+
+        Args:
+            loss (float): The loss value at the current episode.
+            cur_reps (int): The number of repetitions per episode.
+        """
+        print(f"Top Network:{self.max_fitness} Loss:{loss} Iterations:{cur_reps}")
+        with open(f'2X{HIDDEN_SIZE}policy_net_bias{self.max_fitness}_reps{cur_reps}.pkl', 'wb') as file:
+            torch.save(self.policy_net.state_dict(), file)
+
+    @staticmethod
+    def plot_training_progress(episode_loss: List[float], episode_rewards: List[np.ndarray[float]],
+                               episode_rewards_std: List[np.ndarray[float]], j: int, loss: torch.TensorType) -> None:
+        """
+        Plot the training progress of the agent, including episode rewards and episode loss, at every 100 episodes.
+
+        This function generates a live plot of episode rewards and loss as the training progresses.
+        The plot is updated every 100 episodes.
+
+        Args:
+            episode_loss (list): A list containing the loss values for each episode.
+            episode_rewards (list): A list containing the mean rewards obtained for each episode.
+            episode_rewards_std (list): A list containing the standard deviation of rewards for each episode.
+            j (int): The current episode number.
+            loss (float): The loss value of the current episode.
+
+        Returns:
+            None
+        """
+        # Print progress
+        if j % 100 == 0:
+            print('Episode %d: reward = %d' % (j, int(episode_rewards[j])), loss)
+            # Update the live plot
+            x = range(len(episode_rewards))
+
+            fig, ax1 = plt.subplots()
+
+            # Plot episode_rewards with blue color
+            ax1.set_ylabel('Episode Rewards', color='b')
+            ax1.plot(x, episode_rewards, 'b')
+            ax1.tick_params(axis='y', labelcolor='b')
+            ax1.errorbar(x, episode_rewards, yerr=episode_rewards_std, fmt='o', color='b', ecolor='b', capsize=2)
+
+            # Create a second y-axis that shares the same x-axis
+            ax2 = ax1.twinx()
+
+            # Plot episode_loss with red color
+            ax2.set_ylabel('Episode Loss', color='r')
+            ax2.plot(x, episode_loss, 'r')
+            ax2.tick_params(axis='y', labelcolor='r')
+
+            # Set x-axis label
+            ax1.set_xlabel('Episode')
+
+            plt.title('Episode Rewards and Loss')
+            plt.show()
+
+    def get_fitness(self) -> float:
+        """
+        Returns current highest bias mean achieved by model over N_REPETITIONS
+        """
+        return self.max_fitness
+
+
+INPUT_SIZE = 12  # Nodes in input
+HIDDEN_LAYERS = 2  # Number pf hidden layers
+HIDDEN_SIZE = 20  # Number Nodes in input on hidden layers
+OUTPUT_SIZE = 4  # Number of Nodes in output
+LEARNING_RATE = 0.001  # Learning rate used for optimizer
+EPSILON = 0.05  # for epsilon-greedy strategy
+N_EPISODES = 500  # Total iterations of training cycle
+N_REPETITIONS = 50  # Total repetitions per network to determine fittness
+INCREASING_REPS = True  # Configuration whether repetitions increase as training progresses
+N_TRIALS = 100  # Total trials done in each repetition
+
+space = [
+    Real(1e-6, 1e-2, name='learning_rate'),
+    Integer(10, 200, name='hidden_size'),
+    Categorical(['relu', 'tanh', 'leaky_relu'], name='activation_function'),
+    Real(1e-8, 1e-2, name='epsilon'),
+]
+
+
+@use_named_args(space)
+def objective(**params) -> float:
+    """
+    Objective function for Bayesian optimization using skopt.
+
+    This function trains an agent with the given hyper-parameters, evaluates its performance,
+    and returns the negative mean reward as the optimization objective. The skopt library
+    will try to minimize this objective by finding the best set of hyper-parameters.
+
+    Args:
+        **params (dict): A dictionary containing the hyper-parameters as keyword arguments.
+            - learning_rate (float): The learning rate for the optimizer.
+            - hidden_size (int): The number of hidden nodes in each hidden layer of the policy network.
+            - epsilon (float): The epsilon value for the epsilon-greedy strategy.
+            - activation_function (str): The name of the activation function to be used in the policy network.
+              Possible values are 'relu', 'tanh', and 'leaky_relu'.
+
+    Returns:
+        float: The negative mean reward obtained after training the agent. This value is minimized during optimization.
+    """
+    env = CatieAgentEnv()
+    check_env(env, warn=True)
+    activation_map = {
+        'relu': nn.ReLU,
+        'tanh': nn.Tanh,
+        'leaky_relu': nn.LeakyReLU
+    }
+    activation_function = activation_map[params['activation_function']]
+
+    # Create the agent with the given hyperparameters
+    agent = Agent(env, INPUT_SIZE, params['hidden_size'], OUTPUT_SIZE, params['learning_rate'], params['epsilon'],
+                  activation_function)
+
+    # Train the agent
+    agent.train(N_EPISODES, N_REPETITIONS)
+
+    # Compute the optimization objective (e.g., negative mean reward)
+    mean_reward = np.mean(agent.get_fitness())  # Use the appropriate variable from your code
+    return -mean_reward
 
 
 if __name__ == '__main__':
-    # Define hyper parameters
-    torch.autograd.set_detect_anomaly(True, check_nan=True)
-    env = CatieAgentEnv()
-    torch.random.manual_seed(1)
-    random.seed(1)
-    np.random.seed(1)
-    input_size = 8
-    hidden_size = 20
-    output_size = 4
-    lr = 0.001
-    num_episodes = 100000
-    n_repetitions = 10
+    # Init plot
+    plt.figure(figsize=(10, 5))
 
-    # Create the environment and agent
-    agent = Agent(env, input_size, hidden_size, output_size, lr)
+    # Optimizing over all hyper parameters
+    result = gp_minimize(objective, space, n_calls=20, random_state=0, n_random_starts=5, acq_func='EI')
+    best_params = result.x
+    print("Best parameters found:")
+    for i, param_name in enumerate(space):
+        print(f"{param_name.name}: {best_params[i]}")
 
-    # Train the agent
-    agent.train(num_episodes, n_repetitions)
+    # # Define hyper parameters
+    # torch.autograd.set_detect_anomaly(True, check_nan=True)
+    # env =
+    # torch.random.manual_seed(1)
+    # random.seed(1)
+    # np.random.seed(1)
+    #
+    # # Create the environment and agent
+    # agent = Agent(env, INPUT_SIZE, HIDDEN_SIZE, OUTPUT_SIZE, LEARNING_RATE, EPSILON)
+    #
+    # # Train the agent
+    # agent.train(N_EPISODES, N_REPETITIONS)

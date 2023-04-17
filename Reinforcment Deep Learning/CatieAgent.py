@@ -1,8 +1,5 @@
 import random
-import statistics
 import numpy as np
-import tqdm
-from matplotlib import pyplot as plt
 
 CONTINGENCIES_INDEX = 0
 CONTINGENCIES_ARRAY = 1
@@ -236,4 +233,4 @@ class CatieAgent:
         p_explore = self.get_p_explore()
         last_choice = self.get_last_choice()
         biased_ca, anti_biased_ca = self.get_contingent_average()
-        return [trend, p_explore, last_choice, biased_ca, anti_biased_ca]
+        return [np.array(TAO), np.array(PHI), np.array(EPSILON), K, trend, np.array(p_explore), last_choice, np.array(biased_ca), np.array(anti_biased_ca)]
