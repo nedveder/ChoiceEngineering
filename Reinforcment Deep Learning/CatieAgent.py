@@ -233,4 +233,4 @@ class CatieAgent:
         p_explore = self.get_p_explore()
         last_choice = self.get_last_choice()
         biased_ca, anti_biased_ca = self.get_contingent_average()
-        return [np.array(TAO), np.array(PHI), np.array(EPSILON), K, trend, np.array(p_explore), last_choice, np.array(biased_ca), np.array(anti_biased_ca)]
+        return [TAO, PHI, EPSILON, K, trend, p_explore, last_choice, float(biased_ca), float(anti_biased_ca)]

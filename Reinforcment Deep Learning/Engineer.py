@@ -8,10 +8,10 @@ import torch.nn.functional as F
 import gymnasium as gym
 from gymnasium import spaces
 from gymnasium.core import RenderFrame
-from gymnasium.utils.env_checker import check_env
 
 import numpy as np
 import matplotlib.pyplot as plt
+from numpy import ndarray
 
 from CatieAgent import CatieAgent
 
@@ -40,19 +40,9 @@ class CatieAgentEnv(gym.Env):
         self.trial_number = 0
         self.max_trials = number_of_trials
         self.assignments = [0, 0]
-        self.observation_space = spaces.Tuple([spaces.Box(0, 1, dtype=np.float64),  # TAO
-                                               spaces.Box(0, 1, dtype=np.float64),  # PHI
-                                               spaces.Box(0, 1, dtype=np.float64),  # EPSILON
-                                               spaces.Discrete(4, start=-1),  # K
-                                               spaces.Discrete(3, start=-1),  # trend
-                                               spaces.Box(0, 1, dtype=np.float64),  # p_explore
-                                               spaces.Discrete(3, start=-1),  # last_choice
-                                               spaces.Box(0, 1, dtype=np.float64),  # biased_ca
-                                               spaces.Box(0, 1, dtype=np.float64),  # anti_biased_ca
-                                               spaces.MultiDiscrete([100, 100]),  # Assignments to each alternative
-                                               spaces.Discrete(100)])  # Trial number
+        self.observation_space = spaces.Box(low=-np.ones(12), high=np.ones(12) * 4, dtype=np.float64)
 
-    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[Tuple, Dict]:
+    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> tuple[ndarray, dict]:
         """
         Reset the environment to its initial state.
 
@@ -64,13 +54,14 @@ class CatieAgentEnv(gym.Env):
             observation (tuple): The initial observation of the environment after reset.
             info (dict): An empty dictionary.
         """
+        super().reset(seed=seed)
         self.agent = CatieAgent()
         self.trial_number = 0
         self.assignments = [0, 0]
-        observation = *self.agent.get_catie_param(), self.assignments, self.trial_number
-        return observation, {}  # TODO Fix observations types
+        observation = np.array([*self.agent.get_catie_param(), *self.assignments, self.trial_number], dtype=np.float64)
+        return observation, {}
 
-    def step(self, action: Tuple[int, int]) -> Tuple[Tuple, int, bool, Dict]:
+    def step(self, action: Tuple[int, int]) -> tuple[ndarray, int, bool, dict]:
         """
         Take a step in the environment based on the provided action.
 
@@ -89,7 +80,7 @@ class CatieAgentEnv(gym.Env):
         self.assignments[1] += action[1]
         self.trial_number += 1
 
-        observation = self.agent.get_catie_param(), self.assignments, self.trial_number
+        observation = np.array([*self.agent.get_catie_param(), *self.assignments, self.trial_number], dtype=np.float64)
 
         reward = 0
         done = False
@@ -185,8 +176,8 @@ class Agent:
         Returns:
             torch.Tensor: A tensor representing the constrained action probabilities.
         """
-        catie_params, assignments, trial = state
-        state_tensor = torch.Tensor(np.concatenate((catie_params, [trial, assignments[0], assignments[1]])))
+        assignments = state[9], state[10]  # State indices for assignments
+        state_tensor = torch.Tensor(state)
         action_probs = self.policy_net(state_tensor)
         action_probs = nn.functional.softmax(action_probs, dim=-1)
 
@@ -224,74 +215,65 @@ class Agent:
         """
         # INIT TRAINING SESSION
         self.load_network(network_path)
-        episode_rewards = []
-        episode_rewards_std = []
-        episode_loss = []
+        episode_rewards = np.zeros(n_episodes)
+        episode_rewards_std = np.zeros(n_episodes)
+        episode_loss = np.zeros(n_episodes)
         rep_per_episode = np.arange(n_rep, n_rep + n_episodes) if INCREASING_REPS else n_rep
-
         # TRAINING LOOP
         for j in range(n_episodes):
             # Update the policy network
-            self.optimizer.zero_grad()  # TODO possibly move this to loop beginning
-            action_probs = []
-            rep_rewards = []
+            rep_selected_action_probs = torch.zeros((rep_per_episode[j], N_TRIALS))
+            rep_rewards = torch.zeros(rep_per_episode[j])
 
             # REPETITIONS FOR INCREASED ACCURACY IN RESULTS
-            for _ in range(rep_per_episode[j]):
-                episode_reward = 0
-                actions = []
+            for repetition in range(rep_per_episode[j]):
+                reward = 0
                 state, _ = self.env.reset()
-                action_probs_rep = []
-                for _ in range(N_TRIALS):
+                selected_action_probs = torch.zeros(N_TRIALS)
+
+                for trial in range(N_TRIALS):
                     action_prob = self.select_action(state)
-                    action_probs_rep.append(action_prob)
                     action = ALLOCATION_DICT[torch.multinomial(action_prob, num_samples=1).item()]
-                    actions.append(action)
+                    selected_action_probs[trial] = action_prob[DEALLOCATION_DICT[action]]
 
                     next_state, reward, done, _ = self.env.step(action)
-                    episode_reward += reward
 
                     if done:
                         break
                     else:
                         state = next_state
 
-                action_probs.append(
-                    torch.stack(action_probs_rep + [torch.mean(torch.stack(action_probs_rep), dim=0) for _ in
-                                                    range(N_TRIALS - len(action_probs_rep))]))
-                rep_rewards.append(episode_reward)
+                rep_selected_action_probs[repetition] = selected_action_probs
+                rep_rewards[repetition] = reward
+
+            self.optimizer.zero_grad()
 
             # Calculate the episode return (discounted sum of rewards)
-            G = torch.Tensor([np.mean(rep_rewards)])
-
-            padding = [torch.mean(torch.stack(action_probs), dim=0) for _ in range(N_TRIALS - len(action_probs))]
-            padded_action_probs = torch.stack(action_probs + padding)
-            action_probs_mean = torch.mean(padded_action_probs, dim=0)
-
-            # Calculate the entropy regularization term
-            entropy_reg = torch.sum(action_probs_mean * torch.log(action_probs_mean + 1e-6))
+            G = torch.mean(rep_rewards[:j + 1])
+            mean_selected_action_probs = torch.mean(rep_selected_action_probs, dim=0)
 
             # Add the MSE loss term to penalize the difference between G and the target value
-            mse_loss = F.mse_loss(G, torch.tensor([N_TRIALS], dtype=torch.float64))
+            mse_loss = F.mse_loss(G, torch.tensor(N_TRIALS, dtype=torch.float64))
 
-            # Add the entropy regularization term to the loss function
-            loss = mse_loss + 0.01 * entropy_reg
+            action_expectancy = torch.sum(mean_selected_action_probs * torch.log(mean_selected_action_probs + 1e-6))
+            loss = -mse_loss * action_expectancy
 
             # Keep track of loss and rewards over time
-            episode_rewards.append(np.mean(rep_rewards))
-            episode_rewards_std.append(np.std(rep_rewards))
-            episode_loss.append(float(loss))
+            episode_rewards[j] = G
+            episode_rewards_std[j] = torch.std(rep_rewards)
+            episode_loss[j] = loss
 
             # Save highest fitness network so far
-            if np.mean(rep_rewards) > self.max_fitness:
-                self.max_fitness = np.mean(rep_rewards)
+            if G > self.max_fitness:
+                self.max_fitness = G
                 self.save_network(loss, rep_per_episode[j])
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), 1.0)
             self.optimizer.step()
 
-            self.plot_training_progress(episode_loss, episode_rewards, episode_rewards_std, j, loss)
+            # Print progress
+            if j % n_episodes - 1 == 0:
+                self.plot_training_progress(episode_loss, episode_rewards, episode_rewards_std, j, loss)
 
     def load_network(self, network_path: Optional[str]) -> None:
         """
@@ -317,8 +299,8 @@ class Agent:
             torch.save(self.policy_net.state_dict(), file)
 
     @staticmethod
-    def plot_training_progress(episode_loss: List[float], episode_rewards: List[np.ndarray[float]],
-                               episode_rewards_std: List[np.ndarray[float]], j: int, loss: torch.TensorType) -> None:
+    def plot_training_progress(episode_loss: np.ndarray[float], episode_rewards: np.ndarray[float],
+                               episode_rewards_std: np.ndarray[float], j: int, loss: torch.TensorType) -> None:
         """
         Plot the training progress of the agent, including episode rewards and episode loss, at every 100 episodes.
 
@@ -335,33 +317,31 @@ class Agent:
         Returns:
             None
         """
-        # Print progress
-        if j % 100 == 0:
-            print('Episode %d: reward = %d' % (j, int(episode_rewards[j])), loss)
-            # Update the live plot
-            x = range(len(episode_rewards))
+        print('Episode %d: reward = %d' % (j, episode_rewards[j]), loss)
+        # Update the live plot
+        x = range(len(episode_rewards))
 
-            fig, ax1 = plt.subplots()
+        fig, ax1 = plt.subplots()
 
-            # Plot episode_rewards with blue color
-            ax1.set_ylabel('Episode Rewards', color='b')
-            ax1.plot(x, episode_rewards, 'b')
-            ax1.tick_params(axis='y', labelcolor='b')
-            ax1.errorbar(x, episode_rewards, yerr=episode_rewards_std, fmt='o', color='b', ecolor='b', capsize=2)
+        # Plot episode_rewards with blue color
+        ax1.set_ylabel('Episode Rewards', color='b')
+        ax1.plot(x, episode_rewards, 'b')
+        ax1.tick_params(axis='y', labelcolor='b')
+        ax1.errorbar(x, episode_rewards, yerr=episode_rewards_std, fmt='o', color='b', ecolor='b', capsize=2)
 
-            # Create a second y-axis that shares the same x-axis
-            ax2 = ax1.twinx()
+        # Create a second y-axis that shares the same x-axis
+        ax2 = ax1.twinx()
 
-            # Plot episode_loss with red color
-            ax2.set_ylabel('Episode Loss', color='r')
-            ax2.plot(x, episode_loss, 'r')
-            ax2.tick_params(axis='y', labelcolor='r')
+        # Plot episode_loss with red color
+        ax2.set_ylabel('Episode Loss', color='r')
+        ax2.plot(x, episode_loss, 'r')
+        ax2.tick_params(axis='y', labelcolor='r')
 
-            # Set x-axis label
-            ax1.set_xlabel('Episode')
+        # Set x-axis label
+        ax1.set_xlabel('Episode')
 
-            plt.title('Episode Rewards and Loss')
-            plt.show()
+        plt.title('Episode Rewards and Loss')
+        plt.show()
 
     def get_fitness(self) -> float:
         """
@@ -410,7 +390,7 @@ def objective(**params) -> float:
         float: The negative mean reward obtained after training the agent. This value is minimized during optimization.
     """
     env = CatieAgentEnv()
-    check_env(env, warn=True)
+    print(params)
     activation_map = {
         'relu': nn.ReLU,
         'tanh': nn.Tanh,
@@ -418,7 +398,7 @@ def objective(**params) -> float:
     }
     activation_function = activation_map[params['activation_function']]
 
-    # Create the agent with the given hyperparameters
+    # Create the agent with the given hyper-parameters
     agent = Agent(env, INPUT_SIZE, params['hidden_size'], OUTPUT_SIZE, params['learning_rate'], params['epsilon'],
                   activation_function)
 
