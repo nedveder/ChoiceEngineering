@@ -1,3 +1,4 @@
+import random
 from typing import List, Optional, Tuple, Dict, Union
 
 import torch
@@ -12,12 +13,13 @@ from gymnasium.core import RenderFrame
 import numpy as np
 import matplotlib.pyplot as plt
 from numpy import ndarray
+from skopt import gp_minimize
+from skopt.space import Real, Integer
+from skopt.utils import use_named_args
 
 from CatieAgent import CatieAgent
 
-from skopt import gp_minimize
-from skopt.space import Real, Integer, Categorical
-from skopt.utils import use_named_args
+
 
 ALLOCATION_DICT = {0: (0, 0), 1: (1, 0), 2: (0, 1), 3: (1, 1)}
 DEALLOCATION_DICT = {(0, 0): 0, (1, 0): 1, (0, 1): 2, (1, 1): 3}
@@ -123,7 +125,7 @@ class PolicyNet(nn.Module):
         super(PolicyNet, self).__init__()
         self.fc = nn.Sequential(nn.Linear(input_size, hidden_size),
                                 activation_function(),
-                                *([nn.Linear(hidden_size, hidden_size), activation_function()] * HIDDEN_LAYERS),
+                                *([nn.LazyLinear(hidden_size,device=DEVICE), activation_function()] * HIDDEN_LAYERS),
                                 nn.Linear(hidden_size, output_size))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -152,12 +154,12 @@ class Agent:
         Initialize the Agent.
         Args:
             env: The environment in which the agent operates.
-            input_size (int): The size of the input layer for the policy network.
-            hidden_size (int): The size of the hidden layer for the policy network.
-            output_size (int): The size of the output layer for the policy network.
+            input_size: The size of the input layer for the policy network.
+            hidden_size: The size of the hidden layer for the policy network.
+            output_size: The size of the output layer for the policy network.
             lr (float): The learning rate for the optimizer.
             epsilon (float): The exploration rate for the epsilon-greedy strategy.
-            activation_function (str): The activation function for the policy network.
+            activation_function (callable): The activation function for the policy network.
         """
         self.env = env
         self.policy_net = PolicyNet(input_size, hidden_size, output_size, activation_function)
@@ -246,7 +248,6 @@ class Agent:
                 rep_selected_action_probs[repetition] = selected_action_probs
                 rep_rewards[repetition] = reward
 
-            self.optimizer.zero_grad()
 
             # Calculate the episode return (discounted sum of rewards)
             G = torch.mean(rep_rewards[:j + 1])
@@ -256,7 +257,7 @@ class Agent:
             mse_loss = F.mse_loss(G, torch.tensor(N_TRIALS, dtype=torch.float64))
 
             action_expectancy = torch.sum(mean_selected_action_probs * torch.log(mean_selected_action_probs + 1e-6))
-            loss = -mse_loss * action_expectancy
+            loss = -mse_loss*action_expectancy
 
             # Keep track of loss and rewards over time
             episode_rewards[j] = G
@@ -269,10 +270,12 @@ class Agent:
                 self.save_network(loss, rep_per_episode[j])
 
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), MAX_GRAD_NORM)
             self.optimizer.step()
+            self.optimizer.zero_grad()
 
             # Print progress
-            if j % n_episodes - 1 == 0:
+            if j % 10 == 0:
                 self.plot_training_progress(episode_loss, episode_rewards, episode_rewards_std, j, loss)
 
     def load_network(self, network_path: Optional[str]) -> None:
@@ -360,11 +363,12 @@ N_EPISODES = 500  # Total iterations of training cycle
 N_REPETITIONS = 50  # Total repetitions per network to determine fittness
 INCREASING_REPS = True  # Configuration whether repetitions increase as training progresses
 N_TRIALS = 100  # Total trials done in each repetition
+DEVICE = "cpu" if not torch.has_cuda else "cuda:0"
+MAX_GRAD_NORM = 1.0
 
 space = [
     Real(1e-6, 1e-2, name='learning_rate'),
     Integer(10, 200, name='hidden_size'),
-    Categorical(['relu', 'tanh', 'leaky_relu'], name='activation_function'),
     Real(1e-8, 1e-2, name='epsilon'),
 ]
 
@@ -391,16 +395,10 @@ def objective(**params) -> float:
     """
     env = CatieAgentEnv()
     print(params)
-    activation_map = {
-        'relu': nn.ReLU,
-        'tanh': nn.Tanh,
-        'leaky_relu': nn.LeakyReLU
-    }
-    activation_function = activation_map[params['activation_function']]
 
     # Create the agent with the given hyper-parameters
     agent = Agent(env, INPUT_SIZE, params['hidden_size'], OUTPUT_SIZE, params['learning_rate'], params['epsilon'],
-                  activation_function)
+                  nn.Tanh)
 
     # Train the agent
     agent.train(N_EPISODES, N_REPETITIONS)
@@ -411,6 +409,9 @@ def objective(**params) -> float:
 
 
 if __name__ == '__main__':
+    torch.random.manual_seed(1)
+    random.seed(1)
+    np.random.seed(1)
     # Init plot
     plt.figure(figsize=(10, 5))
 
