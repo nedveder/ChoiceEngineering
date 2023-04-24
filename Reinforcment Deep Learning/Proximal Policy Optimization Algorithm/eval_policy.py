@@ -5,9 +5,16 @@ that our trained policy exists independently of our learning algorithm,
 which resides in ppo.py. Thus, we can test our trained policy without
 relying on ppo.py.
 """
+import torch
+
+N_REWARDS_PER_ALT = 25
+N_TRIALS = 100
+
+INDEX_TO_ACTION = {0: (0, 0), 1: (1, 0), 2: (0, 1), 3: (1, 1)}
+ACTION_TO_INDEX = {(0, 0): 0, (1, 0): 1, (0, 1): 2, (1, 1): 3}
 
 
-def _log_summary(ep_len, ep_ret, ep_num):
+def _log_summary(ep_ret, ep_num):
     """
         Print to stdout what we've logged so far in the most recent episode.
 
@@ -16,17 +23,61 @@ def _log_summary(ep_len, ep_ret, ep_num):
         Return:
             None
     """
-    # Round decimal places for more aesthetic logging messages
-    ep_len = str(round(ep_len, 2))
-    ep_ret = str(round(ep_ret, 2))
-
     # Print logging statements
     print(flush=True)
     print(f"-------------------- Episode #{ep_num} --------------------", flush=True)
-    print(f"Episodic Length: {ep_len}", flush=True)
-    print(f"Episodic Return: {ep_ret}", flush=True)
-    print("------------------------------------------------------", flush=True)
+    print(f"Episodic Return: {ep_ret:.2f}", flush=True)
     print(flush=True)
+
+
+def select_action(state, policy):
+    """
+    Select an action from the given policy for a given state while considering constraints.
+
+    This function samples an action from the action probabilities produced by the policy for the current state.
+    It also applies constraints on the actions based on the specific problem domain. It returns the sampled action
+    and the log probability of that action.
+
+    Parameters:
+    -----------
+    state : torch.tensor
+        A tensor representing the current state of the environment.
+    policy : Policy class instance
+        An instance of the policy class, which provides the action probabilities for the given state.
+
+    Returns:
+    --------
+    action : int
+        The sampled action to be taken in the current state, considering the problem-specific constraints.
+    """
+    action_probs = policy(state)
+    assignments, trial_number = (state[9], state[10]), state[11]  # State indices for assignments
+
+    # Create a mask for valid actions - CONSTRAINTS
+    mask = torch.ones(4)
+    add_mask = torch.FloatTensor([1e-9, 0.0, 0.0, 0.0])
+
+    # Create masks for valid actions
+    mask_0_condition = (trial_number > N_TRIALS - N_REWARDS_PER_ALT) & ((assignments[0] == N_TRIALS - trial_number) |
+                                                                        (assignments[1] == N_TRIALS - trial_number))
+    mask_1_condition = assignments[0] < N_REWARDS_PER_ALT
+    mask_2_condition = assignments[1] < N_REWARDS_PER_ALT
+
+    mask[0] *= (~mask_0_condition)
+    mask[1] *= mask_1_condition
+    mask[2] *= mask_2_condition
+    mask[3] *= (mask_1_condition & mask_2_condition)
+
+    # Apply the mask to the action probabilities
+    constrained_probs = (action_probs + add_mask) * mask
+    constrained_probs /= constrained_probs.sum()
+
+    # Sample an action from the distribution
+    action_idx = torch.multinomial(constrained_probs, num_samples=1).item()
+    action = INDEX_TO_ACTION[action_idx]
+
+    # Return the sampled action and the log probability of that action in our distribution
+    return action
 
 
 def rollout(policy, env):
@@ -46,31 +97,17 @@ def rollout(policy, env):
     """
     # Rollout until user kills process
     while True:
-        obs = env.reset()
-        done = False
-
-        # number of timesteps so far
-        t = 0
-
-        # Logging data
-        ep_len = 0  # episodic length
-        ep_ret = 0  # episodic return
-
-        while not done:
-            t += 1
-
-            # Query deterministic action from policy and run it
-            action = policy(obs).detach().numpy()
-            obs, rew, done, _ = env.step(action)
-
-            # Sum all episodic rewards as we go along
-            ep_ret += rew
-
-        # Track episodic length
-        ep_len = t
-
+        # Reset the environment. sNote that obs is short for observation.
+        observation, _ = env.reset()
+        for _ in range(N_TRIALS):
+            # Calculate action and make a step in the env.
+            action, log_prob = policy
+            observation, reward, done, _ = env.step(action)
+            # If the environment tells us the episode is terminated, break
+            if done:
+                break
         # returns episodic length and return in this iteration
-        yield ep_len, ep_ret
+        yield env.compute_reward()
 
 
 def eval_policy(policy, env):
@@ -92,4 +129,4 @@ def eval_policy(policy, env):
     """
     # Rollout with the policy and environment, and log each episode's data
     for ep_num, (ep_len, ep_ret) in enumerate(rollout(policy, env)):
-        _log_summary(ep_len=ep_len, ep_ret=ep_ret, ep_num=ep_num)
+        _log_summary(ep_ret=ep_ret, ep_num=ep_num)
