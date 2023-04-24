@@ -209,22 +209,28 @@ class PPO:
                 batch_rtgs - the rewards to go, Shape: (number of timesteps in batch)
         """
         # The rewards-to-go (rtg) per episode per batch to return.
-        # The shape will be (num timesteps per episode)
-        batch_rtgs = []
+        # Convert batch_rewards to a PyTorch tensor
+        batch_rewards = torch.tensor(batch_rewards, dtype=torch.float)
+
+        # Initialize an empty tensor to store the rewards-to-go
+        batch_rtgs = torch.empty_like(batch_rewards)
 
         # Iterate through each episode
-        for ep_rewards in reversed(batch_rewards):
+        for i in range(batch_rewards.shape[0]):
+            ep_rewards = batch_rewards[i, :]
 
-            discounted_reward = 0  # The discounted reward so far
+            # Compute the rewards-to-go for the current episode
+            rtg = torch.empty_like(ep_rewards)
+            discounted_reward = 0
+            for j in reversed(range(ep_rewards.shape[0])):
+                discounted_reward = ep_rewards[j] + discounted_reward * self.gamma
+                rtg[j] = discounted_reward
 
-            # Iterate through all rewards in the episode. We go backwards for smoother calculation of each
-            # discounted return (think about why it would be harder starting from the beginning)
-            for rew in reversed(ep_rewards):
-                discounted_reward = rew + discounted_reward * self.gamma
-                batch_rtgs.insert(0, discounted_reward)
+            # Store the computed rewards-to-go in the batch_rtgs tensor
+            batch_rtgs[i, :] = rtg
 
-        # Convert the rewards-to-go into a tensor
-        batch_rtgs = torch.tensor(batch_rtgs, dtype=torch.float)
+        # Flatten the batch_rtgs tensor
+        batch_rtgs = batch_rtgs.flatten()
 
         return batch_rtgs
 
@@ -347,18 +353,17 @@ class PPO:
         self.network_rewards_each_epoch.append(episode_rewards.mean())
         self.network_error_each_epoch.append(np.std(episode_rewards) / np.sqrt(self.n_repetitions))
         epoch = len(self.network_rewards_each_epoch)
-        print(f"\nEpoch: {epoch}, Network mean Fitness: {self.network_rewards_each_epoch[-1]}")
-        print(f"Network Fitness error: {self.network_error_each_epoch[-1]}")
         # Update the live plot
         x = list(range(epoch))
         # Plot episode_rewards with blue color
-        figs, axes = plt.subplots(2)
-        axes[0].set_ylabel('Epoch Rewards', color='b')
-        axes[0].plot(x, self.network_rewards_each_epoch, 'b')
-        axes[0].tick_params(axis='y', labelcolor='b')
-        axes[0].errorbar(x, self.network_rewards_each_epoch, yerr=self.network_error_each_epoch,
-                         fmt='o',
-                         color='b', ecolor='b', capsize=2)
+        fig, ax = plt.subplots()
+        ax.plot(x, self.network_rewards_each_epoch, 'b', label='Epoch Rewards')
+        ax.set_ylabel('Epoch Rewards', color='b')
+        ax.tick_params(axis='y', labelcolor='b')
+        ax.errorbar(x, self.network_rewards_each_epoch, yerr=self.network_error_each_epoch,
+                    fmt='o', color='r', ecolor='b', capsize=2)
+        ax.set_title("Mean Network Training Catie Agent Bias")
+        ax.annotate(f"N = {self.n_repetitions}", xy=(0.7, 0.9), xycoords='axes fraction')
         plt.savefig("network_fitness.png")
 
     def _init_hyperparameters(self, hyperparameters):
