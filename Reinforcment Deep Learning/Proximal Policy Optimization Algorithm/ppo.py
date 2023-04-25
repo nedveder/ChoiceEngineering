@@ -1,43 +1,43 @@
-"""
-The file contains the PPO class to train with.
-NOTE: All "ALG STEP"s are following the numbers from the original PPO pseudocode.
-It can be found here: https://spinningup.openai.com/en/latest/_images/math/e62a8971472597f4b014c2da064f636ffe365ba3.svg
-"""
+import os
+import random
+import pandas as pd
 import numpy as np
 import time
 import torch
 import torch.nn as nn
 from matplotlib import pyplot as plt
 from torch.optim import Adam
-from torch.distributions import MultivariateNormal
 import gymnasium as gym
+from network import ForwardNet
 
-ALLOCATION_DICT = {0: (0, 0), 1: (1, 0), 2: (0, 1), 3: (1, 1)}
-DEALLOCATION_DICT = {(0, 0): 0, (1, 0): 1, (0, 1): 2, (1, 1): 3}
+INDEX_TO_ACTION = {0: (0, 0), 1: (1, 0), 2: (0, 1), 3: (1, 1)}
+ACTION_TO_INDEX = {(0, 0): 0, (1, 0): 1, (0, 1): 2, (1, 1): 3}
 
 
 class PPO:
     """
     This is the PPO class we will use as our model in main.py
     """
+    # Used for plotting network training over time.
     network_rewards_each_epoch = []
     network_error_each_epoch = []
 
-    def __init__(self, policy_class, env, n_episodes, n_trials, n_repetitions=700, hidden_size=20, **hyperparameters):
+    def __init__(self, env, n_episodes, n_trials, n_repetitions, hidden_size,
+                 **hyperparameters):
         """
             Initializes the PPO model, including hyperparameters.
-
             Parameters:
-                policy_class - the policy class to use for our actor/critic networks.
-                env - the environment to train on.
+                env : the environment to train on.
+                n_episodes : number of iterations to preform training loop.
+                n_trials : number of trials in each episode for experiment.
+                n_repetitions : number of repetitions to preform test for network,used for benchmarking
+                hidden_size : size of each hidden layer of actor and critic networks
                 hyperparameters - all extra arguments passed into PPO that should be hyperparameters.
 
             Returns:
                 None
         """
         # Make sure the environment is compatible with our code
-        self.n_updates_per_iteration = 10
-        self.hidden_size = hidden_size
         assert (type(env.observation_space) == gym.spaces.Box)
         assert (type(env.action_space) == gym.spaces.Box)
 
@@ -51,61 +51,64 @@ class PPO:
         self.n_episodes = n_episodes
         self.n_trials = n_trials
         self.n_repetitions = n_repetitions
+        self.n_updates_per_batch = 10
+        self.hidden_size = hidden_size
+        self.max_bias_achieved = 0
 
         # Initialize actor and critic networks
-        self.actor = policy_class(self.obs_dim, self.hidden_size, self.act_dim)  # ALG STEP 1
-        self.critic = policy_class(self.obs_dim, self.hidden_size, 1)
+        self.actor = ForwardNet(self.obs_dim, self.hidden_size, self.act_dim)
+        self.critic = ForwardNet(self.obs_dim, self.hidden_size, 1)
 
         # Initialize optimizers for actor and critic
         self.actor_optim = Adam(self.actor.parameters(), lr=self.lr)
         self.critic_optim = Adam(self.critic.parameters(), lr=self.lr)
 
-        # This logger will help us with printing out summaries of each iteration
+        # This logger will help us with printing out summaries of each batch
         self.logger = {
             'delta_t': time.time_ns(),
             'cur_batch': 0,
+            'n_batches': 0,
             'batch_rewards': [],  # episodic returns in batch
             'actor_losses': [],  # losses of actor network in current iteration
+            'start_training': time.time_ns()
         }
 
-    def learn(self, total_batches):
+    def learn(self, n_batches):
         """
             Train the actor and critic networks. Here is where the main PPO algorithm resides.
 
             Parameters:
-                total_timesteps - the total number of timesteps to train for
+                n_batches - the total number of batches to train for, each batch consists of n_episodes and each episode
+                    consists of n_trials.
 
             Return:
                 None
         """
         print(f"Learning... Running {self.n_trials} trials per episode, ", end='')
-        print(f"{self.n_episodes} episodes per batch for a total of {total_batches} batches")
+        print(f"{self.n_episodes} episodes per batch for a total of {n_batches} batches")
+        self.logger['n_batches'] = n_batches
+        for batch_num in range(n_batches):
 
-        for batch_num in range(total_batches):  # ALG STEP 2
             self.logger['cur_batch'] = batch_num
+            # Get data from environment for batch training
+            batch_obs, batch_acts, batch_log_probs, batch_rtgs = self.rollout()
 
-            batch_obs, batch_acts, batch_log_probs, batch_rtgs = self.rollout()  # ALG STEP 3
             # Calculate advantage at k-th iteration
             V, _ = self.evaluate(batch_obs, batch_acts)
-            A_t = batch_rtgs - V.detach()  # ALG STEP 5
+            A_t = batch_rtgs - V.detach()
 
             # Normalizing advantages isn't theoretically necessary, but in practice it decreases the variance of
-            # our advantages and makes convergence much more stable and faster. I added this because
-            # solving some environments was too unstable without it.
+            # our advantages and makes convergence much more stable and faster.
             A_t = (A_t - A_t.mean()) / (A_t.std() + 1e-10)
 
-            # This is the loop where we update our network for some n epochs
-            for _ in range(self.n_updates_per_iteration):  # ALG STEP 6 & 7
+            # This is the loop where we update our network for n_updates_per_iteration
+            for _ in range(self.n_updates_per_batch):
                 # Calculate V_phi and pi_theta(a_t | s_t)
                 V, curr_log_probs = self.evaluate(batch_obs, batch_acts)
 
                 # Calculate the ratio pi_theta(a_t | s_t) / pi_theta_k(a_t | s_t)
                 # NOTE: we just subtract the logs, which is the same as
                 # dividing the values and then canceling the log with e^log.
-                # For why we use log probabilities instead of actual probabilities,
-                # here's a great explanation:
-                # https://cs.stackexchange.com/questions/70518/why-do-we-use-the-log-in-gradient-based-reinforcement-algorithms
-                # TL;DR makes gradient ascent easier behind the scenes.
                 ratios = torch.exp(curr_log_probs - batch_log_probs)
 
                 # Calculate surrogate losses.
@@ -121,6 +124,7 @@ class PPO:
 
                 # Calculate gradients and perform backward propagation for actor network
                 self.actor_optim.zero_grad()
+                # Will not delete intermediary results, so we can preform backward pass once again for critic
                 actor_loss.backward(retain_graph=True)
                 self.actor_optim.step()
 
@@ -138,23 +142,15 @@ class PPO:
             # Save our model if it's time
             if batch_num % self.save_freq == 0:
                 self.plot_training_progress()
-                torch.save(self.actor.state_dict(), './ppo_actor.pth')
-                torch.save(self.critic.state_dict(), './ppo_critic.pth')
+                # Make sure to only save new network if it's an improvement over previous.
+                if self.network_rewards_each_epoch[-1] > self.max_bias_achieved:
+                    self.max_bias_achieved = self.network_rewards_each_epoch[-1]
+                    torch.save(self.actor.state_dict(), './ppo_actor.pth')
+                    torch.save(self.critic.state_dict(), './ppo_critic.pth')
 
     def rollout(self):
         """
-            This is where we collect the batch of data
-            from simulation. Since this is an on-policy algorithm, we'll need to collect a fresh batch
-            of data each time we iterate the actor/critic networks.
 
-            Parameters:
-
-            Return:
-                batch_obs - the observations collected this batch. Shape: (number of timesteps, dimension of observation)
-                batch_acts - the actions collected this batch. Shape: (number of timesteps, dimension of action)
-                batch_log_probs - the log probabilities of each action taken this batch. Shape: (number of timesteps)
-                batch_rtgs - the Rewards-To-Go of each timestep in this batch. Shape: (number of timesteps)
-                batch_lens - the lengths of each episode this batch. Shape: (number of episodes)
         """
         # Batch data.
         batch_obs = np.zeros((self.n_episodes * self.n_trials, self.obs_dim))
@@ -235,7 +231,7 @@ class PPO:
         return batch_rtgs
 
     def select_action(self, state):
-        gaussian_action_mean = self.actor(state)
+        action_probs = self.actor(state)
 
         assignments, trial_number = (state[9], state[10]), state[11]  # State indices for assignments
         # Create a mask for valid actions - CONSTRAINTS
@@ -250,18 +246,18 @@ class PPO:
         mask[3] = 0 if assignments[0] >= 25 or assignments[1] >= 25 else 1.0
 
         # Apply the mask to the action probabilities
-        constrained_probs = ((gaussian_action_mean + add_mask) * mask) / (
-            ((gaussian_action_mean + add_mask) * mask).sum())
+        constrained_probs = ((action_probs + add_mask) * mask) / (
+            ((action_probs + add_mask) * mask).sum())
         # Create a distribution with the mean action and std from the covariance matrix above.
         # For more information on how this distribution works, check out Andrew Ng's lecture on it:
         # https://www.youtube.com/watch?v=JjB58InuTqM
 
         # Sample an action from the distribution
         action_idx = torch.multinomial(constrained_probs, num_samples=1).item()
-        action = ALLOCATION_DICT[action_idx]
+        action = INDEX_TO_ACTION[action_idx]
 
         # Calculate the log probability for that action
-        log_prob = torch.log(constrained_probs[DEALLOCATION_DICT[action]])
+        log_prob = torch.log(constrained_probs[ACTION_TO_INDEX[action]])
 
         # Return the sampled action and the log probability of that action in our distribution
         return action, log_prob.detach()
@@ -311,7 +307,7 @@ class PPO:
 
         # Convert batch_acts to integer indices
         batch_acts_indices = torch.tensor(
-            [DEALLOCATION_DICT[tuple(int(x) for x in act.tolist())] for act in batch_acts], dtype=torch.long)
+            [ACTION_TO_INDEX[tuple(int(x) for x in act.tolist())] for act in batch_acts], dtype=torch.long)
 
         # Compute log probabilities for the entire batch
         log_probs = torch.log(constrained_probs[torch.arange(batch_size), batch_acts_indices])
@@ -320,7 +316,68 @@ class PPO:
         # and log probabilities log_probs of each action in the batch
         return V, log_probs
 
-    def test_network(self):
+    def plot_training_progress(self) -> None:
+        """
+        Plot the training progress of the agent, including episode rewards.
+        test_network is run using only policy network and
+        This function generates a live plot of episode rewards as the training progresses.
+
+        Args:
+
+        Returns:
+            None
+        """
+        episode_rewards = self._test_network()
+        self.network_rewards_each_epoch.append(episode_rewards.mean())
+        self.network_error_each_epoch.append(np.std(episode_rewards) / np.sqrt(self.n_repetitions))
+        epoch = len(self.network_rewards_each_epoch)
+        # Update the live plot
+        x = list(range(epoch))
+
+        # Perform linear regression to find the best-fit line
+        if epoch > 1:
+            fit_coeffs = np.polyfit(x, self.network_rewards_each_epoch, 1)
+            fit_poly = np.poly1d(fit_coeffs)
+            y_fit = fit_poly(x)
+
+        # Plot the data with the best-fit line
+        fig, ax = plt.subplots()
+        ax.plot(x, self.network_rewards_each_epoch, 'royalblue', label='Epoch Rewards')
+        if epoch > 1:
+            ax.plot(x, y_fit, 'r', linestyle='--', label='Best-fit Line')
+        ax.set_ylabel('Epoch Rewards')
+        ax.set_xlabel(f'Epoch(Batches % {self.save_freq})')
+
+        # Plot the confidence interval with light blue color
+        lower_bounds = np.array(self.network_rewards_each_epoch) - np.array(self.network_error_each_epoch)
+        upper_bounds = np.array(self.network_rewards_each_epoch) + np.array(self.network_error_each_epoch)
+        ax.fill_between(x, lower_bounds, upper_bounds, color='lightblue', alpha=0.5, label='Confidence Interval')
+
+        # Add line for the highest reward mean yet
+        max_reward = max(self.network_rewards_each_epoch)
+        ax.hlines(max_reward, 0, epoch - 1, colors='g', linestyle='dotted', label='Highest Reward Mean')
+
+        # Add annotations
+        ax.set_title("Policy Network Training for Catie Agent")
+        if epoch > 1:
+            ax.annotate(f"Training Slope: {fit_coeffs[0]:.2f}", xy=(0.5, 0.45), xycoords='axes fraction')
+        ax.annotate(f"N = {self.n_repetitions}", xy=(0.5, 0.4), xycoords='axes fraction')
+        ax.annotate(f"Highest Reward Mean = {max_reward:.2f}", xy=(0.5, 0.35), xycoords='axes fraction')
+        ax.legend()
+        plt.savefig("network_fitness.png")
+
+        # Append data to file
+        plot_data = {
+            'cur_epoch': [epoch],
+            'network_rewards_each_epoch': [self.network_rewards_each_epoch[-1]],
+            'network_error_each_epoch': [self.network_error_each_epoch[-1]],
+        }
+        batch_df = pd.DataFrame(plot_data)
+        # Save the batch data to a CSV file
+        csv_file = 'plot_data.csv'
+        batch_df.to_csv(csv_file, mode='a', header=not os.path.exists(csv_file), index=False)
+
+    def _test_network(self):
         rep_rewards = np.zeros(self.n_repetitions)
         # REPETITIONS FOR INCREASED ACCURACY IN RESULTS
         for repetition in range(self.n_repetitions):
@@ -335,36 +392,6 @@ class PPO:
                     state = next_state
             rep_rewards[repetition] = self.env.compute_reward()
         return rep_rewards
-
-    def plot_training_progress(self) -> None:
-        """
-        Plot the training progress of the agent, including episode rewards and episode loss, at every 100 episodes.
-
-        This function generates a live plot of episode rewards and loss as the training progresses.
-        The plot is updated every 100 episodes.
-
-        Args:
-            j (int): The current episode number.
-
-        Returns:
-            None
-        """
-        episode_rewards = self.test_network()
-        self.network_rewards_each_epoch.append(episode_rewards.mean())
-        self.network_error_each_epoch.append(np.std(episode_rewards) / np.sqrt(self.n_repetitions))
-        epoch = len(self.network_rewards_each_epoch)
-        # Update the live plot
-        x = list(range(epoch))
-        # Plot episode_rewards with blue color
-        fig, ax = plt.subplots()
-        ax.plot(x, self.network_rewards_each_epoch, 'b', label='Epoch Rewards')
-        ax.set_ylabel('Epoch Rewards', color='b')
-        ax.tick_params(axis='y', labelcolor='b')
-        ax.errorbar(x, self.network_rewards_each_epoch, yerr=self.network_error_each_epoch,
-                    fmt='o', color='r', ecolor='b', capsize=2)
-        ax.set_title("Mean Network Training Catie Agent Bias")
-        ax.annotate(f"N = {self.n_repetitions}", xy=(0.7, 0.9), xycoords='axes fraction')
-        plt.savefig("network_fitness.png")
 
     def _init_hyperparameters(self, hyperparameters):
         """
@@ -398,6 +425,8 @@ class PPO:
 
             # Set the seed
             torch.manual_seed(self.seed)
+            np.random.seed(self.seed)
+            random.seed(self.seed)
             print(f"Successfully set seed to {self.seed}")
 
     def _log_summary(self):
@@ -417,25 +446,35 @@ class PPO:
         delta_t = (self.logger['delta_t'] - delta_t) / 1e9
         delta_t = str(round(delta_t, 2))
 
+        total_time = (time.time_ns() - self.logger['start_training']) / 1e9
+
         cur_batch = self.logger['cur_batch']
         avg_ep_rewards = np.mean([np.sum(ep_rewards) for ep_rewards in self.logger['batch_rewards']])
         avg_ep_error = np.mean(
             [np.std(ep_rewards) / np.sqrt(len(ep_rewards)) for ep_rewards in self.logger['batch_rewards']])
         avg_actor_loss = np.mean([losses.float().mean() for losses in self.logger['actor_losses']])
 
-        # Round decimal places for more aesthetic logging messages
-        avg_ep_rewards = str(np.round(avg_ep_rewards, 2))
-        avg_actor_loss = str(np.round(avg_actor_loss, 5))
-
         # Print logging statements
         print(flush=True)
-        print(f"-------------------- Batches so far #{cur_batch} --------------------", flush=True)
-        print(f"Average Episodic Return: {avg_ep_rewards}", flush=True)
-        print(f"Average Episodic Return Error: {avg_ep_error}", flush=True)
-        print(f"Average Loss: {avg_actor_loss}", flush=True)
+        print(f"---------------- Batches so far {cur_batch}/{self.logger['n_batches']} ------------------", flush=True)
+        print(f"Average Episodic Return: {avg_ep_rewards:.2f}", flush=True)
+        print(f"Average Episodic Return Standard Error: {avg_ep_error:.2f}", flush=True)
+        print(f"Average Loss: {avg_actor_loss:.5f}", flush=True)
         print(f"Iteration took: {delta_t} secs", flush=True)
-        print("------------------------------------------------------", flush=True)
+        print(f"Total time: {total_time:.2f} secs", flush=True)
         print(flush=True)
+
+        # Append data to file
+        epoch_data = {
+            'cur_batch': [cur_batch],
+            'avg_ep_rewards': [avg_ep_rewards],
+            'avg_ep_error': [avg_ep_error],
+            'avg_actor_loss': [avg_actor_loss],
+        }
+        batch_df = pd.DataFrame(epoch_data)
+        # Save the batch data to a CSV file
+        csv_file = 'epoch_data.csv'
+        batch_df.to_csv(csv_file, mode='a', header=not os.path.exists(csv_file), index=False)
 
         # Reset batch-specific logging data
         self.logger['cur_batch'] = 0
