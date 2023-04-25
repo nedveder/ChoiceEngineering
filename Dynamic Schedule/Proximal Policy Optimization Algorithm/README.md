@@ -5,8 +5,8 @@ on <a href=https://github.com/ericyangyu/PPO-for-Beginners>ericyangyu</a> reposi
 ## Algorithm: ##
 This is the pseudocode for the PPO algorithm used.
 <div style="text-align: center;">
-    <img src="./images/ppo_pseudocode.svg" alt="PPO Pseudocode" style="background-color: white; max-width: 100%;" />
-    <img src="./images/g_func.svg" alt="G function" style="background-color: white; max-width: 100%;" />
+    <p><img src="./images/ppo_pseudocode.svg" alt="PPO Pseudocode" style="background-color: white; max-width: 100%;" /></p>
+    <p><img src="./images/g_func.svg" alt="G function" style="background-color: white; max-width: 100%;" /></p>
 </div>
 
 
