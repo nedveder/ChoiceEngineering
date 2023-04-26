@@ -6,6 +6,7 @@ which resides in ppo.py. Thus, we can test our trained policy without
 relying on ppo.py.
 """
 import torch
+from tqdm import tqdm
 
 N_REWARDS_PER_ALT = 25
 N_TRIALS = 100
@@ -101,7 +102,7 @@ def rollout(policy, env):
         observation, _ = env.reset()
         for _ in range(N_TRIALS):
             # Calculate action and make a step in the env.
-            action, log_prob = policy
+            action = select_action(observation, policy)
             observation, reward, done, _ = env.step(action)
             # If the environment tells us the episode is terminated, break
             if done:
@@ -110,7 +111,7 @@ def rollout(policy, env):
         yield env.compute_reward()
 
 
-def eval_policy(policy, env):
+def eval_policy(policy, env, num_iterations=10000):
     """
         The main function to evaluate our policy with. It will iterate a generator object
         "rollout", which will simulate each episode and return the most recent episode's
@@ -128,5 +129,9 @@ def eval_policy(policy, env):
         NOTE: To learn more about generators, look at rollout's function description
     """
     # Rollout with the policy and environment, and log each episode's data
-    for ep_num, (ep_len, ep_ret) in enumerate(rollout(policy, env)):
-        _log_summary(ep_ret=ep_ret, ep_num=ep_num)
+    ep_returns = []
+    for ep_num, ep_ret in tqdm(enumerate(rollout(policy, env))):
+        ep_returns.append(ep_ret)
+        if ep_num >= num_iterations - 1:
+            break
+    return ep_returns

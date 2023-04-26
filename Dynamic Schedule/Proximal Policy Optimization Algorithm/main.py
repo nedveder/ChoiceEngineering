@@ -1,6 +1,10 @@
 import sys
+
+import numpy as np
 import torch
 from gymnasium.utils.env_checker import check_env
+from matplotlib import pyplot as plt
+
 from CatieAgentEnv import CatieAgentEnv
 from ppo import PPO
 from network import ForwardNet
@@ -62,7 +66,7 @@ def train(env, hyperparameters, actor_model, critic_model):
     model.learn(n_batches=hyperparameters['n_batches'])
 
 
-def test(env, hyperparameters, actor_model):
+def test(env, hyperparameters, actor_model, num_iterations=10000):
     """
         Tests the model.
         Parameters:
@@ -93,7 +97,29 @@ def test(env, hyperparameters, actor_model):
     # that once we are done training the model/policy with ppo.py, we no longer need
     # ppo.py since it only contains the training algorithm. The model/policy itself exists
     # independently as a binary file that can be loaded in with torch.
-    eval_policy(policy=policy, env=env)
+    ep_returns = eval_policy(policy=policy, env=env, num_iterations=num_iterations)
+    # Calculate the mean and standard error of the episode returns
+    mean_ep_returns = np.mean(ep_returns)
+    std_error = np.std(ep_returns) / np.sqrt(num_iterations)
+
+    # Define the confidence interval (CI) based on the standard error
+    error_interval = [mean_ep_returns - std_error, mean_ep_returns + std_error]
+
+    # Create a plot with royal blue color
+    plt.plot(range(1, num_iterations + 1), ep_returns, color='royalblue')
+    plt.xlabel('Iteration Number')
+    plt.ylabel('Iteration Bias')
+    plt.title('Policy Evaluation for 10,000 Iterations')
+
+    # Add a light blue shaded confidence interval
+    plt.fill_between(range(1, num_iterations + 1), error_interval[0], error_interval[1], color='lightblue',
+                     alpha=0.5)
+    # Add an annotation for the mean and standard error
+    annotation_text = f"Mean: {mean_ep_returns:.2f}\nStd. Error: {std_error:.2f}"
+    plt.annotate(annotation_text, xy=(0.05, 0.1), xycoords='axes fraction', fontsize=12,
+                 bbox=dict(facecolor='white', edgecolor='black'))
+
+    plt.show()
 
 
 def main(args):
