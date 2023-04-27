@@ -145,8 +145,8 @@ class PPO:
                 # Make sure to only save new network if it's an improvement over previous.
                 if self.network_rewards_each_epoch[-1] > self.max_bias_achieved:
                     self.max_bias_achieved = self.network_rewards_each_epoch[-1]
-                    torch.save(self.actor.state_dict(), './ppo_actor.pth')
-                    torch.save(self.critic.state_dict(), './ppo_critic.pth')
+                    torch.save(self.actor.state_dict(), './ppo_actor_with_new_constraints.pth')
+                    torch.save(self.critic.state_dict(), './ppo_critic_with_new_constraints.pth')
 
     def rollout(self):
         """
@@ -240,7 +240,7 @@ class PPO:
 
         # Apply constraints
         mask[0] = 0 if trial_number > 75 and (
-                assignments[0] == 100 - trial_number or assignments[1] == 100 - trial_number) else 1.0
+                assignments[0] >= 100 - trial_number or assignments[1] >= 100 - trial_number) else 1.0
         mask[1] = 0 if assignments[0] >= 25 else 1.0
         mask[2] = 0 if assignments[1] >= 25 else 1.0
         mask[3] = 0 if assignments[0] >= 25 or assignments[1] >= 25 else 1.0
