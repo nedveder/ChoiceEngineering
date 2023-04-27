@@ -5,6 +5,7 @@ that our trained policy exists independently of our learning algorithm,
 which resides in ppo.py. Thus, we can test our trained policy without
 relying on ppo.py.
 """
+import matplotlib.font_manager
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
@@ -62,7 +63,7 @@ def select_action(state, policy):
 
     # Apply constraints
     mask[0] = 0 if trial_number > 75 and (
-                assignments[0] >= 100 - trial_number or assignments[1] >= 100 - trial_number) else 1.0
+            assignments[0] >= 100 - trial_number or assignments[1] >= 100 - trial_number) else 1.0
     mask[1] = 0 if assignments[0] >= 25 else 1.0
     mask[2] = 0 if assignments[1] >= 25 else 1.0
     mask[3] = 0 if assignments[0] >= 25 or assignments[1] >= 25 else 1.0
@@ -97,7 +98,7 @@ def rollout(policy, env, n_iterations):
     ep_bias = []
     ep_rewards = []
     ep_actions = []
-    for _ in range(n_iterations):
+    for _ in tqdm(range(n_iterations)):
         # Reset the environment. sNote that obs is short for observation.
         observation, _ = env.reset()
         # Because of the way the CATIE env is set up, the reward is the choice, Where 1 is the biased alternative, and 0
@@ -165,14 +166,17 @@ def plot_data(ep_bias, ep_choices, ep_actions):
     plt.savefig('bias_distribution.png')
 
     # 2. Average reward assignment
-    plt.figure(figsize=(15, 2))
+    plt.figure(figsize=(16, 4))
     reward_probabilities = np.mean(ep_actions, axis=0)
 
     for trial, (prob_1, prob_0) in enumerate(reward_probabilities):
-        plt.scatter([trial] * 2, [0.4, 0.6], c=[prob_0, prob_1], cmap='coolwarm', vmin=0, vmax=1, s=50, edgecolors='black')
+        plt.scatter([trial] * 2, [0.4, 0.6], c=[prob_0, prob_1], cmap='coolwarm', vmin=0, vmax=1, s=70,
+                    edgecolors='black')
 
-    plt.yticks([0.4, 0.6], ['Alternative 0', 'Alternative 1'])
+    plt.yticks([0.4, 0.6], ['Alternative 2', 'Alternative 1'],
+               fontproperties=matplotlib.font_manager.FontProperties(size=14))
     plt.ylim(0.3, 0.7)  # Adjust the y-axis limits
+    plt.xlim(-5, 105)  # Adjust the y-axis limits
     plt.xlabel('Trial')
     plt.title('Reward Probability per Alternative per Trial')
     plt.colorbar(label='P(Reward)')

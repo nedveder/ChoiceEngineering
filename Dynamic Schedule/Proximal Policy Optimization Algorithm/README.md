@@ -11,12 +11,7 @@ This is the pseudocode for the PPO algorithm used.
 
 
 ## Usage
-First I recommend creating a python virtual environment:
-```
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
+First Use conda environment defined by 'environment.yml' file.
 
 To train from scratch:
 ```
@@ -33,7 +28,7 @@ To train with existing actor/critic models:
 python main.py --actor_model ppo_actor.pth --critic_model ppo_critic.pth
 ```
 
-NOTE: to change hyperparameters, environments, etc. do it in [main.py](main.py); I didn't have them as command line arguments because I don't like how long it makes the command.
+NOTE: to change hyperparameters, etc. do it in [main.py](main.py).
 
 ## How it works
 
