@@ -38,6 +38,7 @@ class PPO:
                 None
         """
         # Make sure the environment is compatible with our code
+        self.name = None
         assert (type(env.observation_space) == gym.spaces.Box)
         assert (type(env.action_space) == gym.spaces.Box)
 
@@ -145,8 +146,8 @@ class PPO:
                 # Make sure to only save new network if it's an improvement over previous.
                 if self.network_rewards_each_epoch[-1] > self.max_bias_achieved:
                     self.max_bias_achieved = self.network_rewards_each_epoch[-1]
-                    torch.save(self.actor.state_dict(), './ppo_actor_with_new_constraints.pth')
-                    torch.save(self.critic.state_dict(), './ppo_critic_with_new_constraints.pth')
+                    torch.save(self.actor.state_dict(), f'./ppo_actor_{self.name}.pth')
+                    torch.save(self.critic.state_dict(), f'./ppo_critic_{self.name}.pth')
 
     def rollout(self):
         """
@@ -233,24 +234,7 @@ class PPO:
     def select_action(self, state):
         action_probs = self.actor(state)
 
-        assignments, trial_number = (state[9], state[10]), state[11]  # State indices for assignments
-        # Create a mask for valid actions - CONSTRAINTS
-        mask = torch.FloatTensor([1.0, 1.0, 1.0, 1.0])
-        add_mask = torch.FloatTensor([1e-9, 0.0, 0.0, 0.0])
-
-        # Apply constraints
-        mask[0] = 0 if trial_number > 75 and (
-                assignments[0] >= 100 - trial_number or assignments[1] >= 100 - trial_number) else 1.0
-        mask[1] = 0 if assignments[0] >= 25 else 1.0
-        mask[2] = 0 if assignments[1] >= 25 else 1.0
-        mask[3] = 0 if assignments[0] >= 25 or assignments[1] >= 25 else 1.0
-
-        # Apply the mask to the action probabilities
-        constrained_probs = ((action_probs + add_mask) * mask) / (
-            ((action_probs + add_mask) * mask).sum())
-        # Create a distribution with the mean action and std from the covariance matrix above.
-        # For more information on how this distribution works, check out Andrew Ng's lecture on it:
-        # https://www.youtube.com/watch?v=JjB58InuTqM
+        constrained_probs = self._impose_constraints(action_probs, state)
 
         # Sample an action from the distribution
         action_idx = torch.multinomial(constrained_probs, num_samples=1).item()
@@ -261,6 +245,22 @@ class PPO:
 
         # Return the sampled action and the log probability of that action in our distribution
         return action, log_prob.detach()
+
+    @staticmethod
+    def _impose_constraints(action_probs, state):
+        assignments, trial_number = (state[9], state[10]), state[11]  # State indices for assignments
+        # Create a mask for valid actions - CONSTRAINTS
+        mask = torch.ones(4)
+        add_mask = torch.tensor([1e-9, 0, 0, 0])
+        # Apply constraints
+        mask[0] = 0 if assignments[0] <= trial_number - 75 or assignments[1] <= trial_number - 75 else 1.0
+        mask[1] = 0 if assignments[0] >= 25 or assignments[1] <= trial_number - 75 else 1.0
+        mask[2] = 0 if assignments[1] >= 25 or assignments[0] <= trial_number - 75 else 1.0
+        mask[3] = 0 if assignments[0] >= 25 or assignments[1] >= 25 else 1.0
+        # Apply the mask to the action probabilities
+        constrained_probs = ((action_probs + add_mask) * mask) / (
+            ((action_probs + add_mask) * mask).sum())
+        return constrained_probs
 
     def evaluate(self, batch_obs, batch_acts):
         """
@@ -283,27 +283,25 @@ class PPO:
 
         # Calculate the log probabilities of batch actions using most recent actor network.
         # This segment of code is similar to that in select_action()
-        gaussian_action_mean = self.actor(batch_obs)
+        action_probs = self.actor(batch_obs)
 
         batch_size = batch_obs.shape[0]
 
         assignments, trial_numbers = batch_obs[:, 9:11], batch_obs[:, 11]
 
         # Create masks for valid actions - CONSTRAINTS
-        mask = torch.FloatTensor([1.0, 1.0, 1.0, 1.0]).repeat(batch_size, 1)
-        add_mask = torch.FloatTensor([1e-9, 0.0, 0.0, 0.0]).repeat(batch_size, 1)
+        mask = torch.ones(4).repeat(batch_size, 1)
+        add_mask = torch.tensor([1e-9, 0, 0, 0]).repeat(batch_size, 1)
 
         # Apply constraints
-        mask[(trial_numbers > 75) & (
-                (assignments[:, 0] == (100 - trial_numbers)) | (assignments[:, 1] == (100 - trial_numbers))), 0] = 0
-        mask[assignments[:, 0] >= 25, 1] = 0
-        mask[assignments[:, 0] >= 25, 3] = 0
-        mask[assignments[:, 1] >= 25, 2] = 0
-        mask[assignments[:, 1] >= 25, 3] = 0
+        mask[(assignments[:, 0] <= trial_numbers - 75) | (assignments[:, 1] <= trial_numbers - 75), 0] = 0
+        mask[(assignments[:, 0] >= 25) | (assignments[:, 1] <= trial_numbers - 75), 1] = 0
+        mask[(assignments[:, 1] >= 25) | (assignments[:, 0] <= trial_numbers - 75), 2] = 0
+        mask[(assignments[:, 0] >= 25) | (assignments[:, 1] >= 25), 3] = 0
 
         # Compute constrained_probs for the entire batch
-        constrained_probs = ((gaussian_action_mean + add_mask) * mask) / (
-            ((gaussian_action_mean + add_mask) * mask).sum(dim=1, keepdim=True))
+        constrained_probs = ((action_probs + add_mask) * mask) / (
+            ((action_probs + add_mask) * mask).sum(dim=1, keepdim=True))
 
         # Convert batch_acts to integer indices
         batch_acts_indices = torch.tensor(
@@ -364,8 +362,8 @@ class PPO:
         ax.annotate(f"N = {self.n_repetitions}", xy=(0.5, 0.4), xycoords='axes fraction')
         ax.annotate(f"Highest Reward Mean = {max_reward:.2f}", xy=(0.5, 0.35), xycoords='axes fraction')
         ax.legend()
-        plt.savefig("network_fitness.png")
-
+        plt.savefig(f"network_fitness_{self.name}.png")
+        plt.close()
         # Append data to file
         plot_data = {
             'cur_epoch': [epoch],
@@ -374,7 +372,7 @@ class PPO:
         }
         batch_df = pd.DataFrame(plot_data)
         # Save the batch data to a CSV file
-        csv_file = 'plot_data.csv'
+        csv_file = f'plot_data_{self.name}.csv'
         batch_df.to_csv(csv_file, mode='a', header=not os.path.exists(csv_file), index=False)
 
     def _test_network(self):
@@ -473,7 +471,7 @@ class PPO:
         }
         batch_df = pd.DataFrame(epoch_data)
         # Save the batch data to a CSV file
-        csv_file = 'epoch_data.csv'
+        csv_file = f'epoch_data_{self.name}.csv'
         batch_df.to_csv(csv_file, mode='a', header=not os.path.exists(csv_file), index=False)
 
         # Reset batch-specific logging data

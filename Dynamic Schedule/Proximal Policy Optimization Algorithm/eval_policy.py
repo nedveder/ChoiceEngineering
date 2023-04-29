@@ -9,6 +9,7 @@ import matplotlib.font_manager
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
+import seaborn as sns
 from tqdm import tqdm
 
 N_REWARDS_PER_ALT = 25
@@ -59,11 +60,11 @@ def select_action(state, policy):
 
     # Create a mask for valid actions - CONSTRAINTS
     mask = torch.ones(4)
-    add_mask = torch.FloatTensor([0, 0.0, 0.0, 0.0])
+    add_mask = torch.zeros(4)
 
     # Apply constraints
     mask[0] = 0 if trial_number > 75 and (
-            assignments[0] >= 100 - trial_number or assignments[1] >= 100 - trial_number) else 1.0
+            assignments[0] <= trial_number - 75 or assignments[1] <= trial_number - 75) else 1.0
     mask[1] = 0 if assignments[0] >= 25 else 1.0
     mask[2] = 0 if assignments[1] >= 25 else 1.0
     mask[3] = 0 if assignments[0] >= 25 or assignments[1] >= 25 else 1.0
@@ -118,7 +119,7 @@ def rollout(policy, env, n_iterations):
     return ep_bias, ep_rewards, ep_actions
 
 
-def eval_policy(policy, env, n_iterations):
+def eval_policy(policy, env, n_iterations, name):
     """
         The main function to evaluate our policy with. It will plot different information on the choices made and biases
         received.
@@ -133,10 +134,10 @@ def eval_policy(policy, env, n_iterations):
     """
     # Rollout with the policy and environment, and log each episode's data
     ep_bias, ep_agent_choices, ep_actions = rollout(policy, env, n_iterations)
-    plot_data(ep_bias, ep_agent_choices, ep_actions)
+    plot_data(ep_bias, ep_agent_choices, ep_actions, str(name))
 
 
-def plot_data(ep_bias, ep_choices, ep_actions):
+def plot_data(ep_bias, ep_choices, ep_actions, name):
     """
     Plots the Bias distribution, Average reward assignment, and Per trial average choice probability.
 
@@ -145,6 +146,7 @@ def plot_data(ep_bias, ep_choices, ep_actions):
         ep_choices (list): A list of lists, where every sublist describes the choices for each trial in the episode.
         ep_actions (list): A list of lists, where every sublist describes the actions(reward allocation) meaning a list
             of tuples for each trial in the episode.
+        name : Name of the current network
 
     Return:
         None
@@ -163,24 +165,23 @@ def plot_data(ep_bias, ep_choices, ep_actions):
     plt.annotate(annotation_text, xy=(0.05, 0.8), xycoords='axes fraction', fontsize=12,
                  bbox=dict(facecolor='white'))
 
-    plt.savefig('bias_distribution.png')
+    plt.savefig(f'Plots/bias_distribution_{name}.png')
 
     # 2. Average reward assignment
-    plt.figure(figsize=(16, 4))
+    plt.figure(figsize=(16, 3.8))
     reward_probabilities = np.mean(ep_actions, axis=0)
 
     for trial, (prob_1, prob_0) in enumerate(reward_probabilities):
-        plt.scatter([trial] * 2, [0.4, 0.6], c=[prob_0, prob_1], cmap='coolwarm', vmin=0, vmax=1, s=70,
+        plt.scatter([trial] * 2, [0.48, 0.52], c=[prob_0, prob_1], cmap='Oranges', vmin=0, vmax=1, s=140,
                     edgecolors='black')
 
-    plt.yticks([0.4, 0.6], ['Alternative 2', 'Alternative 1'],
+    plt.yticks([0.48, 0.52], ['Alternative 2', 'Alternative 1'],
                fontproperties=matplotlib.font_manager.FontProperties(size=14))
-    plt.ylim(0.3, 0.7)  # Adjust the y-axis limits
-    plt.xlim(-5, 105)  # Adjust the y-axis limits
+    plt.ylim(0.45, 0.55)  # Adjust the y-axis limits
     plt.xlabel('Trial')
     plt.title('Reward Probability per Alternative per Trial')
     plt.colorbar(label='P(Reward)')
-    plt.savefig('average_reward_assignment.png')
+    plt.savefig(f'Plots/average_reward_assignment_{name}.png')
 
     # 3. Per trial average choice probability
     plt.figure()
@@ -190,4 +191,4 @@ def plot_data(ep_bias, ep_choices, ep_actions):
     plt.xlabel('Trial')
     plt.ylabel('Average Choice Probability')
     plt.title('Per Trial Average Choice Probability')
-    plt.savefig('per_trial_average_choice_probability.png')
+    plt.savefig(f'Plots/per_trial_average_choice_probability_{name}.png')

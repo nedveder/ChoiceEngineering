@@ -1,10 +1,6 @@
 import sys
-
-import numpy as np
 import torch
 from gymnasium.utils.env_checker import check_env
-from matplotlib import pyplot as plt
-
 from CatieAgentEnv import CatieAgentEnv
 from ppo import PPO
 from network import ForwardNet
@@ -66,7 +62,7 @@ def train(env, hyperparameters, actor_model, critic_model):
     model.learn(n_batches=hyperparameters['n_batches'])
 
 
-def test(env, hyperparameters, actor_model, num_iterations=10000):
+def test(env, hyperparameters, actor_model, num_iterations=50000):
     """
         Tests the model.
         Parameters:
@@ -98,8 +94,7 @@ def test(env, hyperparameters, actor_model, num_iterations=10000):
     # ppo.py since it only contains the training algorithm. The model/policy itself exists
     # independently as a binary file that can be loaded in with torch.
     # This call also plots the needed data.
-    eval_policy(policy=policy, env=env, n_iterations=num_iterations)
-
+    eval_policy(policy=policy, env=env, n_iterations=num_iterations, name=hyperparameters['name'])
 
 
 def main(args):
@@ -112,19 +107,20 @@ def main(args):
     """
     # NOTE: Here's where you can set hyperparameters for PPO.
     hyperparameters = {
-        'gamma': 0.99,
+        'gamma': 1,
         'lr': 1e-4,
         'clip': 0.2,
         'hidden_size': 20,
         'n_episodes': 1000,
         'n_repetitions': 700,  # 700 is Default for .5% standard error
         'n_trials': 100,  # Default for current experiment
-        'n_batches': 100000
+        'n_batches': 10000,
+        'name': '"new_constraints"'
     }
 
     # Creates the environment we'll be running. Makes sure environment is set up properly.
     env = CatieAgentEnv()
-    check_env(env)
+    check_env(env, skip_render_check=True)
 
     # Train or test, depending on the mode specified
     if args.mode == 'train':

@@ -17,11 +17,12 @@ class ForwardNet(nn.Module):
             output_size (int): The number of output features.
         """
         super(ForwardNet, self).__init__()
-        self.fc = nn.Sequential(nn.Linear(input_size, hidden_size, device=DEVICE),
-                                nn.ReLU(),
-                                *([nn.LazyLinear(hidden_size, device=DEVICE), nn.ReLU()] * HIDDEN_LAYERS),
-                                nn.Linear(hidden_size, output_size, device=DEVICE),
-                                nn.Softmax(dim=-1))
+
+        self.input_layer = nn.Linear(input_size, hidden_size, device=DEVICE)
+        self.hidden_layers = nn.ModuleList([nn.Linear(hidden_size, hidden_size, device=DEVICE)
+                                            for _ in range(HIDDEN_LAYERS)])
+        self.output_layer = nn.Linear(hidden_size, output_size, device=DEVICE)
+        self.activation = nn.ReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -35,8 +36,15 @@ class ForwardNet(nn.Module):
         """
         # Convert observation to tensor if it's a numpy array or tuple
         if isinstance(x, np.ndarray):
-            x = torch.tensor(x, dtype=torch.float)
+            x = torch.tensor(x, device=DEVICE, dtype=torch.float)
         if isinstance(x, tuple):
-            x = torch.tensor([*x], dtype=torch.float)
-        out = self.fc(x)
+            x = torch.tensor([*x], device=DEVICE, dtype=torch.float)
+
+        # Forward pass with skip connections
+        x = self.activation(self.input_layer(x))
+
+        for hidden_layer in self.hidden_layers:
+            x = self.activation(hidden_layer(x) + x)  # Add skip connection
+
+        out = nn.Softmax(dim=-1)(self.output_layer(x))
         return out

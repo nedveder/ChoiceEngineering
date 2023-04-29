@@ -24,7 +24,8 @@ class CatieAgentEnv(gym.Env):
         self.trial_number = 0
         self.max_trials = number_of_trials
         self.assignments = [0, 0]
-        self.observation_space = spaces.Box(low=-np.ones(12), high=np.ones(12) * 4, dtype=np.float64)
+        self.assignments_left_ratio = [1, 1]
+        self.observation_space = spaces.Box(low=-np.ones(14), high=np.ones(14) * 4, dtype=np.float64)
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> tuple[ndarray, dict]:
         """
@@ -42,7 +43,10 @@ class CatieAgentEnv(gym.Env):
         self.agent = CatieAgent()
         self.trial_number = 0
         self.assignments = [0, 0]
-        observation = np.array([*self.agent.get_catie_param(), *self.assignments, self.trial_number], dtype=np.float64)
+        self.assignments_left_ratio = [1, 1]
+        observation = np.array(
+            [*self.agent.get_catie_param(), *self.assignments, *self.assignments_left_ratio, self.trial_number],
+            dtype=np.float64)
         return observation, {}
 
     def step(self, action):
@@ -64,7 +68,12 @@ class CatieAgentEnv(gym.Env):
         self.assignments[1] += action[1]
         self.trial_number += 1
 
-        observation = np.array([*self.agent.get_catie_param(), *self.assignments, self.trial_number], dtype=np.float64)
+        self.assignments_left_ratio = [(25 - self.assignments[0]) / self.trial_number,
+                                       (25 - self.assignments[1]) / self.trial_number]
+
+        observation = np.array(
+            [*self.agent.get_catie_param(), *self.assignments, *self.assignments_left_ratio, self.trial_number],
+            dtype=np.float64)
         reward = choice
         done = self.trial_number == self.max_trials
 
