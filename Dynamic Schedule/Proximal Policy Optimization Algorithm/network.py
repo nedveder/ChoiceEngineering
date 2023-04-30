@@ -5,6 +5,19 @@ from torch import nn
 DEVICE = "cpu" if not torch.has_cuda else "cuda:0"
 
 
+class MaskedSoftmax(nn.Module):
+    def __init__(self):
+        super(MaskedSoftmax, self).__init__()
+
+    def forward(self, x, mask):
+        masked_x = x * mask
+        exp_x = torch.exp(masked_x)
+        masked_exp_x = exp_x * mask
+        norm_factor = torch.sum(masked_exp_x, dim=1, keepdim=True)
+        out = masked_exp_x / norm_factor
+        return out
+
+
 class ForwardNet(nn.Module):
     def __init__(self, input_size: int, hidden_layers: int, hidden_size: int, output_size: int, critic=False):
         """
@@ -23,27 +36,22 @@ class ForwardNet(nn.Module):
                                             for _ in range(hidden_layers)])
         self.output_layer = nn.Linear(hidden_size, output_size, device=DEVICE)
         self.activation = nn.ReLU()
+        self.masked_softmax = MaskedSoftmax()
 
     @staticmethod
-    def _apply_constraints(action_probs: torch.Tensor, state: torch.Tensor) -> torch.Tensor:
+    def _apply_constraints(state: torch.Tensor) -> torch.Tensor:
         assignments, trial_numbers = state[:, 9:11], state[:, 13]
 
         # Create masks for valid actions - CONSTRAINTS
         mask = torch.ones(4).repeat(state.shape[0], 1)
-        add_mask = torch.tensor([1e-9, 0, 0, 0]).repeat(state.shape[0], 1)
 
         # Apply constraints
         mask[(assignments[:, 0] <= trial_numbers - 75) | (assignments[:, 1] <= trial_numbers - 75), 0] = 0
         mask[(assignments[:, 0] >= 25) | (assignments[:, 1] <= trial_numbers - 75), 1] = 0
-        # mask[(assignments[:, 0] >= 25), 1] = 0
         mask[(assignments[:, 1] >= 25) | (assignments[:, 0] <= trial_numbers - 75), 2] = 0
         mask[(assignments[:, 0] >= 25) | (assignments[:, 1] >= 25), 3] = 0
 
-        # Apply the mask to the action probabilities
-        constrained_probs = ((action_probs + add_mask) * mask)
-        constrained_probs /= ((action_probs + add_mask) * mask).sum(dim=1, keepdim=True)
-
-        return constrained_probs
+        return mask
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -67,15 +75,15 @@ class ForwardNet(nn.Module):
         for hidden_layer in self.hidden_layers:
             out = self.activation(hidden_layer(out) + out)  # Add skip connection
 
-        out = nn.Softmax(dim=-1)(self.output_layer(out)) if not self.critic else self.output_layer(out)
-
         # Ensure the input tensor has a batch dimension
         if len(x.shape) == 1:
             s = True
             x = x.unsqueeze(0)
 
-        # Apply constraints if not a critic and batch_constraints is True
         if not self.critic:
-            out = self._apply_constraints(out, x)
+            mask = self._apply_constraints(x)
+            out = self.masked_softmax(self.output_layer(out), mask)
+        else:
+            out = self.output_layer(out)
 
         return out[0] if s else out
