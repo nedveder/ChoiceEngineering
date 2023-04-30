@@ -76,7 +76,6 @@ class CatieAgentEnv(gym.Env):
             dtype=np.float64)
         reward = choice
         done = self.trial_number == self.max_trials
-
         return observation, reward, done, {}
 
     def compute_reward(self) -> int:

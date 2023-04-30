@@ -56,25 +56,9 @@ def select_action(state, policy):
         The sampled action to be taken in the current state, considering the problem-specific constraints.
     """
     action_probs = policy(state)
-    assignments, trial_number = (state[9], state[10]), state[11]  # State indices for assignments
-
-    # Create a mask for valid actions - CONSTRAINTS
-    mask = torch.ones(4)
-    add_mask = torch.zeros(4)
-
-    # Apply constraints
-    mask[0] = 0 if trial_number > 75 and (
-            assignments[0] <= trial_number - 75 or assignments[1] <= trial_number - 75) else 1.0
-    mask[1] = 0 if assignments[0] >= 25 else 1.0
-    mask[2] = 0 if assignments[1] >= 25 else 1.0
-    mask[3] = 0 if assignments[0] >= 25 or assignments[1] >= 25 else 1.0
-
-    # Apply the mask to the action probabilities
-    constrained_probs = (action_probs + add_mask) * mask
-    constrained_probs /= constrained_probs.sum()
 
     # Sample an action from the distribution
-    action_idx = torch.multinomial(constrained_probs, num_samples=1).item()
+    action_idx = torch.multinomial(action_probs, num_samples=1).item()
     action = INDEX_TO_ACTION[action_idx]
 
     # Return the sampled action and the log probability of that action in our distribution
@@ -165,15 +149,17 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
     plt.annotate(annotation_text, xy=(0.05, 0.8), xycoords='axes fraction', fontsize=12,
                  bbox=dict(facecolor='white'))
 
-    plt.savefig(f'Plots/bias_distribution_{name}.png')
+    plt.savefig(f'Plots/{name}/bias_distribution_{name}.png')
 
     # 2. Average reward assignment
     plt.figure(figsize=(16, 3.8))
     reward_probabilities = np.mean(ep_actions, axis=0)
 
     for trial, (prob_1, prob_0) in enumerate(reward_probabilities):
-        plt.scatter([trial] * 2, [0.48, 0.52], c=[prob_0, prob_1], cmap='Oranges', vmin=0, vmax=1, s=140,
-                    edgecolors='black')
+        plt.scatter([trial], [0.48], c=[prob_0], cmap='Oranges', vmin=0, vmax=1, s=140, edgecolors='gray' \
+            if prob_0 == 0 else 'black')
+        plt.scatter([trial], [0.52], c=[prob_1], cmap='Oranges', vmin=0, vmax=1, s=140, edgecolors='gray' \
+            if prob_1 == 0 else 'black')
 
     plt.yticks([0.48, 0.52], ['Alternative 2', 'Alternative 1'],
                fontproperties=matplotlib.font_manager.FontProperties(size=14))
@@ -181,7 +167,8 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
     plt.xlabel('Trial')
     plt.title('Reward Probability per Alternative per Trial')
     plt.colorbar(label='P(Reward)')
-    plt.savefig(f'Plots/average_reward_assignment_{name}.png')
+
+    plt.savefig(f'Plots/{name}/average_reward_assignment_{name}.png')
 
     # 3. Per trial average choice probability
     plt.figure()
@@ -191,4 +178,4 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
     plt.xlabel('Trial')
     plt.ylabel('Average Choice Probability')
     plt.title('Per Trial Average Choice Probability')
-    plt.savefig(f'Plots/per_trial_average_choice_probability_{name}.png')
+    plt.savefig(f'Plots/{name}/per_trial_average_choice_probability_{name}.png')

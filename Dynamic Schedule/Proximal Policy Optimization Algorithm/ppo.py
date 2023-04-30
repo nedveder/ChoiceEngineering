@@ -39,6 +39,7 @@ class PPO:
         """
         # Make sure the environment is compatible with our code
         self.name = None
+        self.hidden_layers = 0
         assert (type(env.observation_space) == gym.spaces.Box)
         assert (type(env.action_space) == gym.spaces.Box)
 
@@ -57,8 +58,8 @@ class PPO:
         self.max_bias_achieved = 0
 
         # Initialize actor and critic networks
-        self.actor = ForwardNet(self.obs_dim, self.hidden_size, self.act_dim)
-        self.critic = ForwardNet(self.obs_dim, self.hidden_size, 1)
+        self.actor = ForwardNet(self.obs_dim, self.hidden_layers, self.hidden_size, self.act_dim)
+        self.critic = ForwardNet(self.obs_dim, self.hidden_layers, self.hidden_size, 1, critic=True)
 
         # Initialize optimizers for actor and critic
         self.actor_optim = Adam(self.actor.parameters(), lr=self.lr)
@@ -146,8 +147,8 @@ class PPO:
                 # Make sure to only save new network if it's an improvement over previous.
                 if self.network_rewards_each_epoch[-1] > self.max_bias_achieved:
                     self.max_bias_achieved = self.network_rewards_each_epoch[-1]
-                    torch.save(self.actor.state_dict(), f'./ppo_actor_{self.name}.pth')
-                    torch.save(self.critic.state_dict(), f'./ppo_critic_{self.name}.pth')
+                    torch.save(self.actor.state_dict(), f'./"{self.name}"/ppo_actor_{self.name}.pth')
+                    torch.save(self.critic.state_dict(), f'./"{self.name}"/ppo_critic_{self.name}.pth')
 
     def rollout(self):
         """
@@ -234,33 +235,13 @@ class PPO:
     def select_action(self, state):
         action_probs = self.actor(state)
 
-        constrained_probs = self._impose_constraints(action_probs, state)
-
-        # Sample an action from the distribution
-        action_idx = torch.multinomial(constrained_probs, num_samples=1).item()
+        action_idx = torch.multinomial(action_probs, num_samples=1).item()
         action = INDEX_TO_ACTION[action_idx]
 
         # Calculate the log probability for that action
-        log_prob = torch.log(constrained_probs[ACTION_TO_INDEX[action]])
-
+        log_prob = torch.log(action_probs[ACTION_TO_INDEX[action]])
         # Return the sampled action and the log probability of that action in our distribution
         return action, log_prob.detach()
-
-    @staticmethod
-    def _impose_constraints(action_probs, state):
-        assignments, trial_number = (state[9], state[10]), state[11]  # State indices for assignments
-        # Create a mask for valid actions - CONSTRAINTS
-        mask = torch.ones(4)
-        add_mask = torch.tensor([1e-9, 0, 0, 0])
-        # Apply constraints
-        mask[0] = 0 if assignments[0] <= trial_number - 75 or assignments[1] <= trial_number - 75 else 1.0
-        mask[1] = 0 if assignments[0] >= 25 or assignments[1] <= trial_number - 75 else 1.0
-        mask[2] = 0 if assignments[1] >= 25 or assignments[0] <= trial_number - 75 else 1.0
-        mask[3] = 0 if assignments[0] >= 25 or assignments[1] >= 25 else 1.0
-        # Apply the mask to the action probabilities
-        constrained_probs = ((action_probs + add_mask) * mask) / (
-            ((action_probs + add_mask) * mask).sum())
-        return constrained_probs
 
     def evaluate(self, batch_obs, batch_acts):
         """
@@ -284,31 +265,14 @@ class PPO:
         # Calculate the log probabilities of batch actions using most recent actor network.
         # This segment of code is similar to that in select_action()
         action_probs = self.actor(batch_obs)
-
         batch_size = batch_obs.shape[0]
-
-        assignments, trial_numbers = batch_obs[:, 9:11], batch_obs[:, 11]
-
-        # Create masks for valid actions - CONSTRAINTS
-        mask = torch.ones(4).repeat(batch_size, 1)
-        add_mask = torch.tensor([1e-9, 0, 0, 0]).repeat(batch_size, 1)
-
-        # Apply constraints
-        mask[(assignments[:, 0] <= trial_numbers - 75) | (assignments[:, 1] <= trial_numbers - 75), 0] = 0
-        mask[(assignments[:, 0] >= 25) | (assignments[:, 1] <= trial_numbers - 75), 1] = 0
-        mask[(assignments[:, 1] >= 25) | (assignments[:, 0] <= trial_numbers - 75), 2] = 0
-        mask[(assignments[:, 0] >= 25) | (assignments[:, 1] >= 25), 3] = 0
-
-        # Compute constrained_probs for the entire batch
-        constrained_probs = ((action_probs + add_mask) * mask) / (
-            ((action_probs + add_mask) * mask).sum(dim=1, keepdim=True))
 
         # Convert batch_acts to integer indices
         batch_acts_indices = torch.tensor(
-            [ACTION_TO_INDEX[tuple(int(x) for x in act.tolist())] for act in batch_acts], dtype=torch.long)
+            [ACTION_TO_INDEX[tuple[int, int](int(x) for x in act.tolist())] for act in batch_acts], dtype=torch.long)
 
         # Compute log probabilities for the entire batch
-        log_probs = torch.log(constrained_probs[torch.arange(batch_size), batch_acts_indices])
+        log_probs = torch.log(action_probs[torch.arange(batch_size), batch_acts_indices])
 
         # Return the value vector V of each observation in the batch
         # and log probabilities log_probs of each action in the batch
@@ -333,6 +297,8 @@ class PPO:
         x = list(range(epoch))
 
         # Perform linear regression to find the best-fit line
+        y_fit = []
+        fit_coeffs = []
         if epoch > 1:
             fit_coeffs = np.polyfit(x, self.network_rewards_each_epoch, 1)
             fit_poly = np.poly1d(fit_coeffs)
@@ -357,12 +323,13 @@ class PPO:
 
         # Add annotations
         ax.set_title("Policy Network Training for Catie Agent")
+        xy_cord = 'axes fraction'
         if epoch > 1:
-            ax.annotate(f"Training Slope: {fit_coeffs[0]:.2f}", xy=(0.5, 0.45), xycoords='axes fraction')
-        ax.annotate(f"N = {self.n_repetitions}", xy=(0.5, 0.4), xycoords='axes fraction')
-        ax.annotate(f"Highest Reward Mean = {max_reward:.2f}", xy=(0.5, 0.35), xycoords='axes fraction')
+            ax.annotate(f"Training Slope: {fit_coeffs[0]:.2f}", xy=(0.5, 0.45), xycoords=xy_cord)
+        ax.annotate(f"N = {self.n_repetitions}", xy=(0.5, 0.4), xycoords=xy_cord)
+        ax.annotate(f"Highest Reward Mean = {max_reward:.2f}", xy=(0.5, 0.35), xycoords=xy_cord)
         ax.legend()
-        plt.savefig(f"network_fitness_{self.name}.png")
+        plt.savefig(f'"{self.name}"/network_fitness_{self.name}.png')
         plt.close()
         # Append data to file
         plot_data = {
@@ -372,7 +339,7 @@ class PPO:
         }
         batch_df = pd.DataFrame(plot_data)
         # Save the batch data to a CSV file
-        csv_file = f'plot_data_{self.name}.csv'
+        csv_file = f'"{self.name}"/plot_data_{self.name}.csv'
         batch_df.to_csv(csv_file, mode='a', header=not os.path.exists(csv_file), index=False)
 
     def _test_network(self):
@@ -471,7 +438,7 @@ class PPO:
         }
         batch_df = pd.DataFrame(epoch_data)
         # Save the batch data to a CSV file
-        csv_file = f'epoch_data_{self.name}.csv'
+        csv_file = f'./"{self.name}"/epoch_data_{self.name}.csv'
         batch_df.to_csv(csv_file, mode='a', header=not os.path.exists(csv_file), index=False)
 
         # Reset batch-specific logging data

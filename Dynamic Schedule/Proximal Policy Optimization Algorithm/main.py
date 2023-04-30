@@ -1,3 +1,4 @@
+import os
 import sys
 import torch
 from gymnasium.utils.env_checker import check_env
@@ -82,9 +83,10 @@ def test(env, hyperparameters, actor_model, num_iterations=50000):
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.shape[0]
     hidden_size = hyperparameters['hidden_size']
+    hidden_layers = hyperparameters['hidden_layers']
 
     # Build our policy the same way we build our actor model in PPO
-    policy = ForwardNet(obs_dim, hidden_size, act_dim)
+    policy = ForwardNet(obs_dim, hidden_layers, hidden_size, act_dim)
 
     # Load in the actor model saved by the PPO algorithm
     policy.load_state_dict(torch.load(actor_model))
@@ -111,21 +113,25 @@ def main(args):
         'lr': 1e-4,
         'clip': 0.2,
         'hidden_size': 20,
-        'n_episodes': 1000,
-        'n_repetitions': 700,  # 700 is Default for .5% standard error
+        'hidden_layers': 2,
+        'n_episodes': 2048,  # Number of episodes per batch used for batch learning
+        'n_repetitions': 2048,  # Number of repetitions for testing every few batches
         'n_trials': 100,  # Default for current experiment
-        'n_batches': 10000,
-        'name': '"new_constraints"'
+        'n_batches': 100000,
+        'name': '"max_25_rewards"'
     }
 
     # Creates the environment we'll be running. Makes sure environment is set up properly.
     env = CatieAgentEnv()
     check_env(env, skip_render_check=True)
-
     # Train or test, depending on the mode specified
     if args.mode == 'train':
+        if not os.path.exists(f"{hyperparameters['name']}"):
+            os.makedirs(f"{hyperparameters['name']}")
         train(env=env, hyperparameters=hyperparameters, actor_model=args.actor_model, critic_model=args.critic_model)
     else:
+        if not os.path.exists(f"./Plots/{hyperparameters['name']}"):
+            os.makedirs(f"./Plots/{hyperparameters['name']}")
         test(env=env, hyperparameters=hyperparameters, actor_model=args.actor_model)
 
 

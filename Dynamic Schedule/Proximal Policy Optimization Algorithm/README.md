@@ -46,3 +46,8 @@ It's a completely separate module from the training code and this goes to show t
 
 1. OpenAI article proposing PPO algorithm - https://arxiv.org/abs/1707.06347
 2. OpenAI's explanation regarding PPO algorithm - https://spinningup.openai.com/en/latest/algorithms/ppo.html#id2
+
+
+## IDEAS
+1. Add prev choice to network params
+2. Add constraint to network, so it allocate reward to biased alternative in 100 trial
