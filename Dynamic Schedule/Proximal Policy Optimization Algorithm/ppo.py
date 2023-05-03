@@ -1,3 +1,4 @@
+import concurrent
 import os
 import random
 import pandas as pd
@@ -8,7 +9,8 @@ import torch.nn as nn
 from matplotlib import pyplot as plt
 from torch.optim import Adam
 import gymnasium as gym
-from network import ForwardNet
+from network import ForwardNet, DEVICE
+from concurrent.futures import ProcessPoolExecutor
 
 INDEX_TO_ACTION = {0: (0, 0), 1: (1, 0), 2: (0, 1), 3: (1, 1)}
 ACTION_TO_INDEX = {(0, 0): 0, (1, 0): 1, (0, 1): 2, (1, 1): 3}
@@ -22,8 +24,7 @@ class PPO:
     network_rewards_each_epoch = []
     network_error_each_epoch = []
 
-    def __init__(self, env, n_episodes, n_trials, n_repetitions, hidden_size,
-                 **hyperparameters):
+    def __init__(self, env, n_episodes, n_trials, n_repetitions, hidden_size, **hyperparameters):
         """
             Initializes the PPO model, including hyperparameters.
             Parameters:
@@ -38,7 +39,7 @@ class PPO:
                 None
         """
         # Make sure the environment is compatible with our code
-        self.name = None
+        self.name = hyperparameters['name']
         self.hidden_layers = 0
         assert (type(env.observation_space) == gym.spaces.Box)
         assert (type(env.action_space) == gym.spaces.Box)
@@ -93,7 +94,7 @@ class PPO:
 
             self.logger['cur_batch'] = batch_num
             # Get data from environment for batch training
-            batch_obs, batch_acts, batch_log_probs, batch_rtgs = self.rollout()
+            batch_obs, batch_acts, batch_log_probs, batch_rtgs = self.parallel_rollout()
 
             # Calculate advantage at k-th iteration
             V, _ = self.evaluate(batch_obs, batch_acts)
@@ -144,56 +145,60 @@ class PPO:
             # Save our model if it's time
             if batch_num % self.save_freq == 0:
                 self.plot_training_progress()
-                # Make sure to only save new network if it's an improvement over previous.
-                if self.network_rewards_each_epoch[-1] > self.max_bias_achieved:
-                    self.max_bias_achieved = self.network_rewards_each_epoch[-1]
-                    torch.save(self.actor.state_dict(), f'./"{self.name}"/ppo_actor_{self.name}.pth')
-                    torch.save(self.critic.state_dict(), f'./"{self.name}"/ppo_critic_{self.name}.pth')
+                self.max_bias_achieved = self.network_rewards_each_epoch[-1]
+                torch.save(self.actor.state_dict(), f'./{self.name}/ppo_actor_{self.name}.pth')
+                torch.save(self.critic.state_dict(), f'./{self.name}/ppo_critic_{self.name}.pth')
 
-    def rollout(self):
-        """
+    @staticmethod
+    def rollout_single_episode(select_action, env, n_trials, obs_dim):
+        ep_obs = np.zeros((n_trials, obs_dim))
+        ep_acts = np.zeros((n_trials, 2))
+        ep_log_probs = np.zeros(n_trials)
+        ep_rewards = np.zeros(n_trials)
 
-        """
-        # Batch data.
-        batch_obs = np.zeros((self.n_episodes * self.n_trials, self.obs_dim))
-        batch_acts = np.zeros((self.n_episodes * self.n_trials, 2))
-        batch_log_probs = np.zeros(self.n_episodes * self.n_trials)
+        observation, _ = env.reset()
+
+        for trial in range(n_trials):
+            ep_obs[trial] = observation
+            action, log_prob = select_action(observation)
+            observation, reward, done, _ = env.step(action)
+
+            ep_rewards[trial] = reward
+            ep_acts[trial] = action
+            ep_log_probs[trial] = log_prob
+
+            if done:
+                break
+
+        return ep_obs, ep_acts, ep_log_probs, ep_rewards
+
+    def parallel_rollout(self):
+        batch_size = self.n_episodes * self.n_trials
+        batch_obs = np.zeros((batch_size, self.obs_dim))
+        batch_acts = np.zeros((batch_size, 2))
+        batch_log_probs = np.zeros(batch_size)
         batch_rewards = np.zeros((self.n_episodes, self.n_trials))
-        ep_rewards = torch.zeros(self.n_trials)
 
-        for episode in range(self.n_episodes):
-            ep_rewards = ep_rewards.detach() * 0
-            # Reset the environment. sNote that obs is short for observation.
-            observation, _ = self.env.reset()
+        with ProcessPoolExecutor() as executor:
+            future_results = [
+                executor.submit(self.rollout_single_episode, self.select_action, self.env, self.n_trials, self.obs_dim)
+                for _ in range(self.n_episodes)]
 
-            for trial in range(self.n_trials):
+            for future in concurrent.futures.as_completed(future_results):
+                index = future_results.index(future)
+                ep_obs, ep_acts, ep_log_probs, ep_rewards = future.result()
+                episode_start = index * self.n_trials
+                episode_end = (index + 1) * self.n_trials
+                batch_obs[episode_start:episode_end] = ep_obs
+                batch_acts[episode_start:episode_end] = ep_acts
+                batch_log_probs[episode_start:episode_end] = ep_log_probs
+                batch_rewards[index] = ep_rewards
 
-                # Track observations in this batch
-                batch_obs[episode * self.n_trials + trial] = observation
+        batch_obs = torch.tensor(batch_obs, dtype=torch.float, device=DEVICE)
+        batch_acts = torch.tensor(batch_acts, dtype=torch.float, device=DEVICE)
+        batch_log_probs = torch.tensor(batch_log_probs, dtype=torch.float, device=DEVICE)
+        batch_rtgs = self.compute_rtgs(batch_rewards)
 
-                # Calculate action and make a step in the env.
-                action, log_prob = self.select_action(observation)
-                observation, reward, done, _ = self.env.step(action)
-
-                # Track recent reward, action, and action log probability
-                ep_rewards[trial] = reward
-                batch_acts[episode * self.n_trials + trial] = action
-                batch_log_probs[episode * self.n_trials + trial] = log_prob
-
-                # If the environment tells us the episode is terminated, break
-                if done:
-                    break
-
-            # Track episodic rewards
-            batch_rewards[episode] = ep_rewards
-
-        # Reshape data as tensors in the shape specified in function description, before returning
-        batch_obs = torch.tensor(batch_obs, dtype=torch.float)
-        batch_acts = torch.tensor(batch_acts, dtype=torch.float)
-        batch_log_probs = torch.tensor(batch_log_probs, dtype=torch.float)
-        batch_rtgs = self.compute_rtgs(batch_rewards)  # ALG STEP 4
-
-        # Log the episodic returns and episodic lengths in this batch.
         self.logger['batch_rewards'] = list(batch_rewards)
 
         return batch_obs, batch_acts, batch_log_probs, batch_rtgs
@@ -268,8 +273,8 @@ class PPO:
         batch_size = batch_obs.shape[0]
 
         # Convert batch_acts to integer indices
-        batch_acts_indices = torch.tensor(
-            [ACTION_TO_INDEX[tuple[int, int](int(x) for x in act.tolist())] for act in batch_acts], dtype=torch.long)
+        batch_acts_indices = torch.tensor([ACTION_TO_INDEX[tuple[int, int](int(x) for x in act.tolist())]
+                                           for act in batch_acts], dtype=torch.long)
 
         # Compute log probabilities for the entire batch
         log_probs = torch.log(action_probs[torch.arange(batch_size), batch_acts_indices])
@@ -289,7 +294,7 @@ class PPO:
         Returns:
             None
         """
-        episode_rewards = self._test_network()
+        episode_rewards = self._parallel_test_network()
         self.network_rewards_each_epoch.append(episode_rewards.mean())
         self.network_error_each_epoch.append(np.std(episode_rewards) / np.sqrt(self.n_repetitions))
         epoch = len(self.network_rewards_each_epoch)
@@ -310,7 +315,7 @@ class PPO:
         if epoch > 1:
             ax.plot(x, y_fit, 'r', linestyle='--', label='Best-fit Line')
         ax.set_ylabel('Epoch Rewards')
-        ax.set_xlabel(f'Epoch(Batches % {self.save_freq})')
+        ax.set_xlabel('Epoch')
 
         # Plot the confidence interval with light blue color
         lower_bounds = np.array(self.network_rewards_each_epoch) - np.array(self.network_error_each_epoch)
@@ -329,7 +334,7 @@ class PPO:
         ax.annotate(f"N = {self.n_repetitions}", xy=(0.5, 0.4), xycoords=xy_cord)
         ax.annotate(f"Highest Reward Mean = {max_reward:.2f}", xy=(0.5, 0.35), xycoords=xy_cord)
         ax.legend()
-        plt.savefig(f'"{self.name}"/network_fitness_{self.name}.png')
+        plt.savefig(f'{self.name}/network_fitness_{self.name}.png')
         plt.close()
         # Append data to file
         plot_data = {
@@ -339,23 +344,32 @@ class PPO:
         }
         batch_df = pd.DataFrame(plot_data)
         # Save the batch data to a CSV file
-        csv_file = f'"{self.name}"/plot_data_{self.name}.csv'
+        csv_file = f'./{self.name}/plot_data_{self.name}.csv'
         batch_df.to_csv(csv_file, mode='a', header=not os.path.exists(csv_file), index=False)
 
-    def _test_network(self):
-        rep_rewards = np.zeros(self.n_repetitions)
-        # REPETITIONS FOR INCREASED ACCURACY IN RESULTS
-        for repetition in range(self.n_repetitions):
-            state, _ = self.env.reset()
-            for _ in range(self.n_trials):
-                action, log_action_prob = self.select_action(state)
-                next_state, reward, done, _ = self.env.step(action)
+    def _test_network_single_run(self, repetition):
+        state, _ = self.env.reset()
+        for _ in range(self.n_trials):
+            action, log_action_prob = self.select_action(state)
+            next_state, reward, done, _ = self.env.step(action)
 
-                if done:
-                    break
-                else:
-                    state = next_state
-            rep_rewards[repetition] = self.env.compute_reward()
+            if done:
+                break
+            else:
+                state = next_state
+        return repetition, self.env.compute_reward()
+
+    def _parallel_test_network(self):
+        rep_rewards = np.zeros(self.n_repetitions)
+
+        with ProcessPoolExecutor() as executor:
+            future_results = [executor.submit(self._test_network_single_run, repetition) for repetition in
+                              range(self.n_repetitions)]
+
+            for future in concurrent.futures.as_completed(future_results):
+                repetition, reward = future.result()
+                rep_rewards[repetition] = reward
+
         return rep_rewards
 
     def _init_hyperparameters(self, hyperparameters):
@@ -376,12 +390,13 @@ class PPO:
         self.clip = 0.2  # Recommended 0.2, helps define the threshold to clip the ratio during SGA
 
         # Miscellaneous parameters
-        self.save_freq = 10  # How often we save in number of iterations
+        self.save_freq = 20  # How often we save in number of iterations
         self.seed = 1  # Sets the seed of our program, used for reproducibility of results
 
         # Change any default values to custom values for specified hyperparameters
         for param, val in hyperparameters.items():
-            exec('self.' + param + ' = ' + str(val))
+            if param != 'name':
+                exec('self.' + param + ' = ' + str(val))
 
         # Sets the seed if specified
         if self.seed is not None:
@@ -435,10 +450,11 @@ class PPO:
             'avg_ep_rewards': [avg_ep_rewards],
             'avg_ep_error': [avg_ep_error],
             'avg_actor_loss': [avg_actor_loss],
+            'timestamp': [time.time_ns() / 1e9],
         }
         batch_df = pd.DataFrame(epoch_data)
         # Save the batch data to a CSV file
-        csv_file = f'./"{self.name}"/epoch_data_{self.name}.csv'
+        csv_file = f'./{self.name}/epoch_data_{self.name}.csv'
         batch_df.to_csv(csv_file, mode='a', header=not os.path.exists(csv_file), index=False)
 
         # Reset batch-specific logging data

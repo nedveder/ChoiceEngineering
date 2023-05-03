@@ -9,8 +9,8 @@ import matplotlib.font_manager
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
-import seaborn as sns
-from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor
+import concurrent.futures
 
 N_REWARDS_PER_ALT = 25
 N_TRIALS = 100
@@ -65,42 +65,35 @@ def select_action(state, policy):
     return action
 
 
-def rollout(policy, env, n_iterations):
-    """
-        Returns a generator to roll out each episode given a trained policy and
-        environment to test on.
+def rollout_single_episode(policy, env):
+    observation, _ = env.reset()
+    rewards = []
+    actions = []
+    for _ in range(N_TRIALS):
+        action = select_action(observation, policy)
+        observation, reward, done, _ = env.step(action)
+        rewards.append(reward)
+        actions.append(action)
+    episode_bias = env.compute_reward()
+    return episode_bias, rewards, actions
 
-        Parameters:
-            policy - The trained policy to test
-            env - The environment to evaluate the policy on
-            render - Specifies whether to render or not
 
-        Return:
-            A generator object rollout, or iterable, which will return the latest
-            episodic length and return on each iteration of the generator.
+def parallel_rollout(policy, env, n_iterations):
+    episode_biases = np.zeros(n_iterations)
+    episode_rewards = [None] * n_iterations
+    episode_actions = [None] * n_iterations
 
-    """
-    ep_bias = []
-    ep_rewards = []
-    ep_actions = []
-    for _ in tqdm(range(n_iterations)):
-        # Reset the environment. sNote that obs is short for observation.
-        observation, _ = env.reset()
-        # Because of the way the CATIE env is set up, the reward is the choice, Where 1 is the biased alternative, and 0
-        # is the non-biased alternative.
-        rewards = []
-        actions = []
-        for _ in range(N_TRIALS):
-            # Calculate action and make a step in the env.
-            action = select_action(observation, policy)
-            observation, reward, done, _ = env.step(action)
-            rewards.append(reward)
-            actions.append(action)
-        # returns episodic length and return in this iteration
-        ep_bias.append(env.compute_reward())
-        ep_rewards.append(rewards)
-        ep_actions.append(actions)
-    return ep_bias, ep_rewards, ep_actions
+    with ProcessPoolExecutor() as executor:
+        future_results = [executor.submit(rollout_single_episode, policy, env) for _ in range(n_iterations)]
+
+        for future in concurrent.futures.as_completed(future_results):
+            index = future_results.index(future)
+            episode_bias, rewards, actions = future.result()
+            episode_biases[index] = episode_bias
+            episode_rewards[index] = rewards
+            episode_actions[index] = actions
+
+    return episode_biases, episode_rewards, episode_actions
 
 
 def eval_policy(policy, env, n_iterations, name):
@@ -117,7 +110,7 @@ def eval_policy(policy, env, n_iterations, name):
             None
     """
     # Rollout with the policy and environment, and log each episode's data
-    ep_bias, ep_agent_choices, ep_actions = rollout(policy, env, n_iterations)
+    ep_bias, ep_agent_choices, ep_actions = parallel_rollout(policy, env, n_iterations)
     plot_data(ep_bias, ep_agent_choices, ep_actions, str(name))
 
 
@@ -126,7 +119,7 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
     Plots the Bias distribution, Average reward assignment, and Per trial average choice probability.
 
     Parameters:
-        ep_bias (list): A list of the total bias for each experiment.
+        ep_bias : A list of the total bias for each experiment.
         ep_choices (list): A list of lists, where every sublist describes the choices for each trial in the episode.
         ep_actions (list): A list of lists, where every sublist describes the actions(reward allocation) meaning a list
             of tuples for each trial in the episode.

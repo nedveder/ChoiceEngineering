@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 
-DEVICE = "cpu" if not torch.has_cuda else "cuda:0"
+DEVICE = torch.device("cpu" if not torch.cuda.is_available() else "cuda:0")
 
 
 class MaskedSoftmax(nn.Module):
@@ -10,11 +10,8 @@ class MaskedSoftmax(nn.Module):
         super(MaskedSoftmax, self).__init__()
 
     def forward(self, x, mask):
-        masked_x = x * mask
-        exp_x = torch.exp(masked_x)
-        masked_exp_x = exp_x * mask
-        norm_factor = torch.sum(masked_exp_x, dim=1, keepdim=True)
-        out = masked_exp_x / norm_factor
+        masked_x = torch.where(mask == 1, x, torch.full_like(x, float('-inf')).to(DEVICE))
+        out = torch.softmax(masked_x, dim=1)
         return out
 
 
@@ -43,7 +40,7 @@ class ForwardNet(nn.Module):
         assignments, trial_numbers = state[:, 9:11], state[:, 13]
 
         # Create masks for valid actions - CONSTRAINTS
-        mask = torch.ones(4).repeat(state.shape[0], 1)
+        mask = torch.ones(4).repeat(state.shape[0], 1).to(DEVICE)
 
         # Apply constraints
         mask[(assignments[:, 0] <= trial_numbers - 75) | (assignments[:, 1] <= trial_numbers - 75), 0] = 0
@@ -65,13 +62,14 @@ class ForwardNet(nn.Module):
             torch.Tensor: The output tensor.
         """
         s = False
+        # Convert to tensor types
         if isinstance(x, np.ndarray):
-            x = torch.tensor(x, device=DEVICE, dtype=torch.float)
+            x = torch.tensor(x, dtype=torch.float).to(DEVICE)
         if isinstance(x, tuple):
-            x = torch.tensor([*x], device=DEVICE, dtype=torch.float)
+            x = torch.tensor([*x], dtype=torch.float).to(DEVICE)
 
+        # Forward pass through hidden linear layers with activation
         out = self.activation(self.input_layer(x))
-
         for hidden_layer in self.hidden_layers:
             out = self.activation(hidden_layer(out) + out)  # Add skip connection
 
@@ -80,6 +78,7 @@ class ForwardNet(nn.Module):
             s = True
             x = x.unsqueeze(0)
 
+        # Mask layer
         if not self.critic:
             mask = self._apply_constraints(x)
             out = self.masked_softmax(self.output_layer(out), mask)

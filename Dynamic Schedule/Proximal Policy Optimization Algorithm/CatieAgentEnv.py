@@ -68,8 +68,8 @@ class CatieAgentEnv(gym.Env):
         self.assignments[1] += action[1]
         self.trial_number += 1
 
-        self.assignments_left_ratio = [(25 - self.assignments[0]) / self.trial_number,
-                                       (25 - self.assignments[1]) / self.trial_number]
+        self.assignments_left_ratio = [(25 - self.assignments[0]) / 100,
+                                       (25 - self.assignments[1]) / 100]
 
         observation = np.array(
             [*self.agent.get_catie_param(), *self.assignments, *self.assignments_left_ratio, self.trial_number],

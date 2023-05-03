@@ -1,7 +1,6 @@
 import os
 import sys
 import torch
-from gymnasium.utils.env_checker import check_env
 from CatieAgentEnv import CatieAgentEnv
 from ppo import PPO
 from network import ForwardNet
@@ -113,21 +112,20 @@ def main(args):
         'lr': 1e-4,
         'clip': 0.2,
         'hidden_size': 20,
-        'hidden_layers': 2,
-        'n_episodes': 2048,  # Number of episodes per batch used for batch learning
-        'n_repetitions': 2048,  # Number of repetitions for testing every few batches
+        'hidden_layers': 6,
+        'n_episodes': 1024,  # Number of episodes per batch used for batch learning
+        'n_repetitions': 4096,  # Number of repetitions for testing every few batches
         'n_trials': 100,  # Default for current experiment
         'n_batches': 100000,
-        'name': '"max_25_rewards"'
+        'name': '1'
     }
 
     # Creates the environment we'll be running. Makes sure environment is set up properly.
     env = CatieAgentEnv()
-    check_env(env, skip_render_check=True)
     # Train or test, depending on the mode specified
     if args.mode == 'train':
-        if not os.path.exists(f"{hyperparameters['name']}"):
-            os.makedirs(f"{hyperparameters['name']}")
+        if not os.path.exists(f"./{hyperparameters['name']}"):
+            os.makedirs(f"./{hyperparameters['name']}")
         train(env=env, hyperparameters=hyperparameters, actor_model=args.actor_model, critic_model=args.critic_model)
     else:
         if not os.path.exists(f"./Plots/{hyperparameters['name']}"):
