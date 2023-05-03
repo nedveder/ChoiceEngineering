@@ -129,8 +129,8 @@ def main(args):
             os.makedirs(f"./{hyperparameters['name']}")
         train(env=env, hyperparameters=hyperparameters, actor_model=args.actor_model, critic_model=args.critic_model)
     else:
-        if not os.path.exists(f"./Plots/{hyperparameters['name']}"):
-            os.makedirs(f"./Plots/{hyperparameters['name']}")
+        if not os.path.exists(f"Plots/{hyperparameters['name']}"):
+            os.makedirs(f"Plots/{hyperparameters['name']}")
         test(env=env, hyperparameters=hyperparameters, actor_model=args.actor_model)
 
 
