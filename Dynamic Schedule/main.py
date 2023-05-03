@@ -113,7 +113,7 @@ def main(args):
         'lr': 1e-4,
         'clip': 0.2,
         'hidden_size': 20,
-        'hidden_layers': 7,
+        'hidden_layers': 5,
         'n_episodes': 1024,  # Number of episodes per batch used for batch learning
         'n_repetitions': 4096,  # Number of repetitions for testing every few batches
         'n_trials': 100,  # Default for current experiment
