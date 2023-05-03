@@ -19,8 +19,9 @@ def get_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--mode', dest='mode', type=str, default='train')  # can be 'train' or 'test'
-    parser.add_argument('--actor_model', dest='actor_model', type=str, default='')  # your actor model filename
-    parser.add_argument('--critic_model', dest='critic_model', type=str, default='')  # your critic model filename
+    parser.add_argument('--name', dest='name', type=str, default='3')  # name of network
+    parser.add_argument('--actor', dest='actor_model', type=str, default='')  # your actor model filename
+    parser.add_argument('--critic', dest='critic_model', type=str, default='')  # your critic model filename
 
     args = parser.parse_args()
 
@@ -112,12 +113,12 @@ def main(args):
         'lr': 1e-4,
         'clip': 0.2,
         'hidden_size': 20,
-        'hidden_layers': 6,
+        'hidden_layers': 7,
         'n_episodes': 1024,  # Number of episodes per batch used for batch learning
         'n_repetitions': 4096,  # Number of repetitions for testing every few batches
         'n_trials': 100,  # Default for current experiment
         'n_batches': 100000,
-        'name': '1'
+        'name': args.name
     }
 
     # Creates the environment we'll be running. Makes sure environment is set up properly.
