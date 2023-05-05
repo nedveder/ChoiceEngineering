@@ -8,7 +8,6 @@ import torch
 import torch.nn as nn
 from matplotlib import pyplot as plt
 from torch.optim import Adam
-import gymnasium as gym
 from network import ForwardNet, DEVICE
 from concurrent.futures import ProcessPoolExecutor
 
@@ -41,8 +40,6 @@ class PPO:
         # Make sure the environment is compatible with our code
         self.name = hyperparameters['name']
         self.hidden_layers = 0
-        assert (type(env.observation_space) == gym.spaces.Box)
-        assert (type(env.action_space) == gym.spaces.Box)
 
         # Initialize hyperparameters for training with PPO
         self._init_hyperparameters(hyperparameters)

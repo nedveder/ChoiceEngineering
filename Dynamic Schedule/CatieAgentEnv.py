@@ -1,13 +1,9 @@
-from typing import List, Optional, Dict, Union
-import gymnasium as gym
-from gymnasium import spaces
-from gymnasium.core import RenderFrame
 import numpy as np
 from numpy import ndarray
 from CatieAgent import CatieAgent
 
 
-class CatieAgentEnv(gym.Env):
+class CatieAgentEnv:
     """
     Custom gymnasium environment for the CatieAgent, which inherits from gym.Env.
     """
@@ -20,14 +16,14 @@ class CatieAgentEnv(gym.Env):
             number_of_trials (int): The number of trials to run. Defaults to 100.
         """
         self.agent = CatieAgent(number_of_trials=number_of_trials)
-        self.action_space = spaces.Box(low=np.zeros(4), high=np.ones(4), dtype=np.float64)
+        self.action_space = np.zeros(4)
         self.trial_number = 0
         self.max_trials = number_of_trials
         self.assignments = [0, 0]
         self.assignments_left_ratio = [1, 1]
-        self.observation_space = spaces.Box(low=-np.ones(14), high=np.ones(14) * 4, dtype=np.float64)
+        self.observation_space = np.zeros(14)
 
-    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> tuple[ndarray, dict]:
+    def reset(self) -> tuple[ndarray, dict]:
         """
         Reset the environment to its initial state.
 
@@ -39,7 +35,6 @@ class CatieAgentEnv(gym.Env):
             observation (tuple): The initial observation of the environment after reset.
             info (dict): An empty dictionary.
         """
-        super().reset(seed=seed)
         self.agent = CatieAgent()
         self.trial_number = 0
         self.assignments = [0, 0]
@@ -85,6 +80,3 @@ class CatieAgentEnv(gym.Env):
         Returns: Bias of all choices made by current CatieAgent
         """
         return self.agent.get_bias()
-
-    def render(self) -> Optional[Union[RenderFrame, List[RenderFrame]]]:
-        return None
