@@ -12,6 +12,8 @@ from matplotlib import pyplot as plt
 from concurrent.futures import ProcessPoolExecutor
 import concurrent.futures
 
+from tqdm import tqdm
+
 N_REWARDS_PER_ALT = 25
 N_TRIALS = 100
 
@@ -61,7 +63,7 @@ def select_action(state, policy):
     action_idx = torch.multinomial(action_probs, num_samples=1).item()
     action = INDEX_TO_ACTION[action_idx]
 
-    # Return the sampled action and the log probability of that action in our distribution
+    # Return the sampled action
     return action
 
 
@@ -86,7 +88,7 @@ def parallel_rollout(policy, env, n_iterations):
     with ProcessPoolExecutor() as executor:
         future_results = [executor.submit(rollout_single_episode, policy, env) for _ in range(n_iterations)]
 
-        for future in concurrent.futures.as_completed(future_results):
+        for future in tqdm(concurrent.futures.as_completed(future_results)):
             index = future_results.index(future)
             episode_bias, rewards, actions = future.result()
             episode_biases[index] = episode_bias
@@ -147,6 +149,7 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
     # 2. Average reward assignment
     plt.figure(figsize=(16, 3.8))
     reward_probabilities = np.mean(ep_actions, axis=0)
+    reward_probabilities_error = np.std(ep_actions, axis=0) / np.sqrt(len(ep_actions))
 
     for trial, (prob_1, prob_0) in enumerate(reward_probabilities):
         plt.scatter([trial], [0.48], c=[prob_0], cmap='Oranges', vmin=0, vmax=1, s=140, edgecolors='gray' \
@@ -163,6 +166,26 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
 
     plt.savefig(f'Plots/{name}/average_reward_assignment_{name}.png')
 
+    # 2.1
+    plt.figure()
+    # Creating the x-axis values for the sub-arrays
+    x1 = np.arange(0, 100)
+    x2 = np.arange(0, 100)
+
+    # Plotting the sub-arrays
+    plt.errorbar(x1, reward_probabilities[:, 0], yerr=reward_probabilities_error[:, 0], label="Alternative A",
+                 linestyle='-', marker='o', ecolor='b', color='royalblue', alpha=0.5)
+    plt.errorbar(x2, reward_probabilities[:, 1], yerr=reward_probabilities_error[:, 1], label="Alternative B",
+                 linestyle='-', marker='o', ecolor='r', color='maroon', alpha=0.1)
+
+    # Customizing the plot
+    plt.xlabel("Trial")
+    plt.ylabel("Probability Density")
+    plt.title("Probability for Reward Assignment")
+    plt.legend()
+
+    plt.savefig(f'Plots/{name}/average_reward_assignment_pdf_{name}.png')
+
     # 3. Per trial average choice probability
     plt.figure()
     n_iterations = len(ep_choices)
@@ -172,3 +195,5 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
     plt.ylabel('Average Choice Probability')
     plt.title('Per Trial Average Choice Probability')
     plt.savefig(f'Plots/{name}/per_trial_average_choice_probability_{name}.png')
+
+    plt.close('all')

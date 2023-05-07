@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 
-DEVICE = torch.device("cpu" if not torch.cuda.is_available() else "cuda:0")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class MaskedSoftmax(nn.Module):
@@ -64,10 +64,10 @@ class ForwardNet(nn.Module):
         s = False
         # Convert to tensor types
         if isinstance(x, np.ndarray):
-            x = torch.tensor(x, dtype=torch.float).to(DEVICE)
+            x = torch.tensor(x, dtype=torch.float)
         if isinstance(x, tuple):
-            x = torch.tensor([*x], dtype=torch.float).to(DEVICE)
-
+            x = torch.tensor([*x], dtype=torch.float)
+        x = x.to(DEVICE)
         # Forward pass through hidden linear layers with activation
         out = self.activation(self.input_layer(x))
         for hidden_layer in self.hidden_layers:

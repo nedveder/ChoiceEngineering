@@ -7,7 +7,7 @@ import time
 import torch
 import torch.nn as nn
 from matplotlib import pyplot as plt
-from torch.optim import Adam
+import torch.optim
 from network import ForwardNet, DEVICE
 from concurrent.futures import ProcessPoolExecutor
 
@@ -51,7 +51,7 @@ class PPO:
         self.n_episodes = n_episodes
         self.n_trials = n_trials
         self.n_repetitions = n_repetitions
-        self.n_updates_per_batch = 10
+        self.n_updates_per_batch = 64
         self.hidden_size = hidden_size
         self.max_bias_achieved = 0
 
@@ -60,8 +60,8 @@ class PPO:
         self.critic = ForwardNet(self.obs_dim, self.hidden_layers, self.hidden_size, 1, critic=True)
 
         # Initialize optimizers for actor and critic
-        self.actor_optim = Adam(self.actor.parameters(), lr=self.lr)
-        self.critic_optim = Adam(self.critic.parameters(), lr=self.lr)
+        self.actor_optim = torch.optim.Adam(self.actor.parameters(), lr=self.lr)
+        self.critic_optim = torch.optim.Adam(self.critic.parameters(), lr=self.lr)
 
         # This logger will help us with printing out summaries of each batch
         self.logger = {
@@ -91,7 +91,8 @@ class PPO:
 
             self.logger['cur_batch'] = batch_num
             # Get data from environment for batch training
-            batch_obs, batch_acts, batch_log_probs, batch_rtgs = self.parallel_rollout()
+            batch_obs, batch_acts, batch_log_probs, batch_rtgs = self.parallel_rollout() if DEVICE == torch.device(
+                'cpu') else self.rollout()
 
             # Calculate advantage at k-th iteration
             V, _ = self.evaluate(batch_obs, batch_acts)
@@ -145,6 +146,54 @@ class PPO:
                 self.max_bias_achieved = self.network_rewards_each_epoch[-1]
                 torch.save(self.actor.state_dict(), f'./{self.name}/ppo_actor_{self.name}.pth')
                 torch.save(self.critic.state_dict(), f'./{self.name}/ppo_critic_{self.name}.pth')
+
+    def rollout(self):
+        """
+
+        """
+        # Batch data.
+        batch_obs = np.zeros((self.n_episodes * self.n_trials, self.obs_dim))
+        batch_acts = np.zeros((self.n_episodes * self.n_trials, 2))
+        batch_log_probs = np.zeros(self.n_episodes * self.n_trials)
+        batch_rewards = np.zeros((self.n_episodes, self.n_trials))
+        ep_rewards = torch.zeros(self.n_trials)
+
+        for episode in range(self.n_episodes):
+            ep_rewards = ep_rewards.detach() * 0
+            # Reset the environment. sNote that obs is short for observation.
+            observation, _ = self.env.reset()
+
+            for trial in range(self.n_trials):
+
+                # Track observations in this batch
+                batch_obs[episode * self.n_trials + trial] = observation
+
+                # Calculate action and make a step in the env.
+                action, log_prob = self.select_action(observation)
+                observation, reward, done, _ = self.env.step(action)
+
+                # Track recent reward, action, and action log probability
+                ep_rewards[trial] = reward
+                batch_acts[episode * self.n_trials + trial] = action
+                batch_log_probs[episode * self.n_trials + trial] = log_prob
+
+                # If the environment tells us the episode is terminated, break
+                if done:
+                    break
+
+            # Track episodic rewards
+            batch_rewards[episode] = ep_rewards
+
+        # Reshape data as tensors in the shape specified in function description, before returning
+        batch_obs = torch.tensor(batch_obs, dtype=torch.float).to(DEVICE)
+        batch_acts = torch.tensor(batch_acts, dtype=torch.float).to(DEVICE)
+        batch_log_probs = torch.tensor(batch_log_probs, dtype=torch.float).to(DEVICE)
+        batch_rtgs = self.compute_rtgs(batch_rewards)  # ALG STEP 4
+
+        # Log the episodic returns and episodic lengths in this batch.
+        self.logger['batch_rewards'] = list(batch_rewards)
+
+        return batch_obs, batch_acts, batch_log_probs, batch_rtgs
 
     @staticmethod
     def rollout_single_episode(select_action, env, n_trials, obs_dim):
@@ -210,10 +259,10 @@ class PPO:
         """
         # The rewards-to-go (rtg) per episode per batch to return.
         # Convert batch_rewards to a PyTorch tensor
-        batch_rewards = torch.tensor(batch_rewards, dtype=torch.float)
+        batch_rewards = torch.tensor(batch_rewards, dtype=torch.float).to(DEVICE)
 
         # Initialize an empty tensor to store the rewards-to-go
-        batch_rtgs = torch.empty_like(batch_rewards)
+        batch_rtgs = torch.empty_like(batch_rewards).to(DEVICE)
 
         # Iterate through each episode
         for i in range(batch_rewards.shape[0]):
@@ -236,9 +285,7 @@ class PPO:
 
     def select_action(self, state):
         action_probs = self.actor(state)
-
-        action_idx = torch.multinomial(action_probs, num_samples=1).item()
-        action = INDEX_TO_ACTION[action_idx]
+        action = INDEX_TO_ACTION[torch.multinomial(action_probs, num_samples=1).item()]
 
         # Calculate the log probability for that action
         log_prob = torch.log(action_probs[ACTION_TO_INDEX[action]])
@@ -291,7 +338,8 @@ class PPO:
         Returns:
             None
         """
-        episode_rewards = self._parallel_test_network()
+        episode_rewards = self._parallel_test_network() if DEVICE == torch.device(
+            'cpu') else self._test_network()
         self.network_rewards_each_epoch.append(episode_rewards.mean())
         self.network_error_each_epoch.append(np.std(episode_rewards) / np.sqrt(self.n_repetitions))
         epoch = len(self.network_rewards_each_epoch)
@@ -344,17 +392,44 @@ class PPO:
         csv_file = f'./{self.name}/plot_data_{self.name}.csv'
         batch_df.to_csv(csv_file, mode='a', header=not os.path.exists(csv_file), index=False)
 
+    def _test_network(self):
+        rep_rewards = np.zeros(self.n_repetitions)
+        # REPETITIONS FOR INCREASED ACCURACY IN RESULTS
+        for repetition in range(self.n_repetitions):
+            state, _ = self.env.reset()
+            rewards = np.zeros(self.n_trials)
+            for t in range(self.n_trials):
+                action_probs = self.actor(state)
+                action = INDEX_TO_ACTION[torch.multinomial(action_probs, num_samples=1).item()]
+                next_state, reward, done, _ = self.env.step(action)
+
+                rewards[t] = reward
+
+                if done:
+                    break
+                else:
+                    state = next_state
+
+            rep_rewards[repetition] = rewards.sum()
+        return rep_rewards
+
     def _test_network_single_run(self, repetition):
         state, _ = self.env.reset()
-        for _ in range(self.n_trials):
-            action, log_action_prob = self.select_action(state)
+        rewards = np.zeros(self.n_trials)
+
+        for t in range(self.n_trials):
+            action_probs = self.actor(state)
+            action = INDEX_TO_ACTION[torch.multinomial(action_probs, num_samples=1).item()]
             next_state, reward, done, _ = self.env.step(action)
+
+            rewards[t] = reward
 
             if done:
                 break
             else:
                 state = next_state
-        return repetition, self.env.compute_reward()
+
+        return repetition, rewards.sum()
 
     def _parallel_test_network(self):
         rep_rewards = np.zeros(self.n_repetitions)
@@ -387,7 +462,7 @@ class PPO:
         self.clip = 0.2  # Recommended 0.2, helps define the threshold to clip the ratio during SGA
 
         # Miscellaneous parameters
-        self.save_freq = 20  # How often we save in number of iterations
+        self.save_freq = 10  # How often we save in number of iterations
         self.seed = 1  # Sets the seed of our program, used for reproducibility of results
 
         # Change any default values to custom values for specified hyperparameters
@@ -429,7 +504,7 @@ class PPO:
         avg_ep_rewards = np.mean([np.sum(ep_rewards) for ep_rewards in self.logger['batch_rewards']])
         avg_ep_error = np.mean(
             [np.std(ep_rewards) / np.sqrt(len(ep_rewards)) for ep_rewards in self.logger['batch_rewards']])
-        avg_actor_loss = np.mean([losses.float().mean() for losses in self.logger['actor_losses']])
+        avg_actor_loss = np.mean([losses.cpu().mean() for losses in self.logger['actor_losses']])
 
         # Print logging statements
         print(flush=True)

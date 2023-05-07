@@ -5,7 +5,7 @@ from CatieAgent import CatieAgent
 
 class CatieAgentEnv:
     """
-    Custom gymnasium environment for the CatieAgent, which inherits from gym.Env.
+    Custom environment for the CatieAgent, which inherits from gym.Env.
     """
 
     def __init__(self, number_of_trials: int = 100) -> None:
