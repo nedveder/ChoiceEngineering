@@ -87,6 +87,7 @@ class PPO:
         print(f"Learning... Running {self.n_trials} trials per episode, ", end='')
         print(f"{self.n_episodes} episodes per batch for a total of {n_batches} batches")
         self.logger['n_batches'] = n_batches
+        torch.save(self.actor.state_dict(), f'./{self.name}/ppo_actor_initial.pth')
         for batch_num in range(n_batches):
 
             self.logger['cur_batch'] = batch_num
@@ -96,7 +97,7 @@ class PPO:
             avg_ep_rewards = np.mean([np.sum(ep_rewards) for ep_rewards in self.logger['batch_rewards']])
             if avg_ep_rewards > self.max_bias_achieved:
                 self.max_bias_achieved = avg_ep_rewards
-                torch.save(self.actor.state_dict(), f'./{self.name}/ppo_actor_best_{self.name}.pth')
+                torch.save(self.actor.state_dict(), f'./{self.name}/ppo_actor_best.pth')
             # Calculate advantage at k-th iteration
             V, _ = self.evaluate(batch_obs, batch_acts)
             A_t = batch_rtgs - V.detach()
@@ -145,8 +146,8 @@ class PPO:
             # Save our model if it's time
             if batch_num % self.save_freq == 0:
                 self.plot_training_progress()
-                torch.save(self.actor.state_dict(), f'./{self.name}/ppo_actor_{self.name}.pth')
-                torch.save(self.critic.state_dict(), f'./{self.name}/ppo_critic_{self.name}.pth')
+                torch.save(self.actor.state_dict(), f'./{self.name}/ppo_actor.pth')
+                torch.save(self.critic.state_dict(), f'./{self.name}/ppo_critic.pth')
 
     def rollout(self):
         """
@@ -356,7 +357,7 @@ class PPO:
         ax.annotate(f"N = {self.n_repetitions}", xy=(0.5, 0.4), xycoords=xy_cord)
         ax.annotate(f"Highest Reward Mean = {max_reward:.2f}", xy=(0.5, 0.35), xycoords=xy_cord)
         ax.legend()
-        plt.savefig(f'{self.name}/network_fitness_{self.name}.png')
+        plt.savefig(f'{self.name}/network_fitness.png')
         plt.close()
         # Append data to file
         plot_data = {
@@ -366,7 +367,7 @@ class PPO:
         }
         batch_df = pd.DataFrame(plot_data)
         # Save the batch data to a CSV file
-        csv_file = f'./{self.name}/plot_data_{self.name}.csv'
+        csv_file = f'./{self.name}/plot_data.csv'
         batch_df.to_csv(csv_file, mode='a', header=not os.path.exists(csv_file), index=False)
 
     def _test_network(self):
@@ -503,7 +504,7 @@ class PPO:
         }
         batch_df = pd.DataFrame(epoch_data)
         # Save the batch data to a CSV file
-        csv_file = f'./{self.name}/epoch_data_{self.name}.csv'
+        csv_file = f'./{self.name}/epoch_data.csv'
         batch_df.to_csv(csv_file, mode='a', header=not os.path.exists(csv_file), index=False)
 
         # Reset batch-specific logging data

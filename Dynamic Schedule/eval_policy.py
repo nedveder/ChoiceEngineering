@@ -161,7 +161,7 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
                  bbox=dict(facecolor='white'))
 
     # Save the figure
-    plt.savefig(f'Plots/{name}/bias_distribution_{name}.png')
+    plt.savefig(f'Plots/{name}/bias_distribution.png')
 
     # 2. Average reward assignment
     plt.figure(figsize=(16, 3.8))
@@ -181,7 +181,7 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
     plt.title('Reward Probability per Alternative per Trial')
     plt.colorbar(label='P(Reward)')
 
-    plt.savefig(f'Plots/{name}/average_reward_assignment_{name}.png')
+    plt.savefig(f'Plots/{name}/average_reward_assignment.png')
 
     # 2.1
     plt.figure()
@@ -201,7 +201,7 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
     plt.title("Probability for Reward Assignment")
     plt.legend()
 
-    plt.savefig(f'Plots/{name}/average_reward_assignment_pdf_{name}.png')
+    plt.savefig(f'Plots/{name}/average_reward_assignment_pdf.png')
 
     # 3. Per trial average choice probability
     plt.figure()
@@ -211,6 +211,6 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
     plt.xlabel('Trial')
     plt.ylabel('Average Choice Probability')
     plt.title('Per Trial Average Choice Probability')
-    plt.savefig(f'Plots/{name}/per_trial_average_choice_probability_{name}.png')
+    plt.savefig(f'Plots/{name}/per_trial_average_choice_probability.png')
 
     plt.close('all')
