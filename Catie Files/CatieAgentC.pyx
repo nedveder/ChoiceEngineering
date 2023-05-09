@@ -1,8 +1,7 @@
+cimport cython
 import random
-import statistics
 import numpy as np
-import tqdm
-from matplotlib import pyplot as plt
+cimport numpy as np
 
 CONTINGENCIES_INDEX = 0
 CONTINGENCIES_ARRAY = 1
@@ -17,40 +16,55 @@ INVALID_TREND = 0
 POSITIVE_TREND = 1
 NEGATIVE_TREND = -1
 NO_LAST_CHOICE = -1
+N_TRIALS=100
+cdef class CatieAgent:
+    def __init__(self):
+        cdef:
+            # Contingent Average value for each choice at each trial
+            int alt_b_contingent_average
+            int alt_a_contingent_average
+            # Dictionaries containing all k-contingencies so far
+            dict alt_a_contingencies
+            dict alt_b_contingencies
+            # Array of previous choices
+            np.ndarray[np.int8_t, ndim=1] previous_choices
+            # Array of all outcomes
+            np.ndarray[np.int8_t, ndim=1] outcomes
+            # Arrays of outcomes for each Alternative on each trial that it was chosen
+            np.ndarray[np.int8_t, ndim=1] alt_a_outcomes
+            np.ndarray[np.int8_t, ndim=1] alt_b_outcomes
+            # Indexes that count how many times each choice was made
+            dict choice_indexes
+            # Index of current trial
+            int trial_number
+            # Array of surprise_t values at each trial
+            np.ndarray[np.float64_t, ndim=1] surprises
+            # All of CATIE agent parameters
+            double tao
+            double epsilon
+            double phi
+            int k
+            int trend
 
-
-class CatieAgent:
-
-    def __init__(self, number_of_trials=100, tao=TAO, epsilon=EPSILON, phi=PHI, k=K):
-        # Contingent Average value for each choice at each trial
-        self.number_of_trials: int = number_of_trials
-        self.alt_b_contingent_average: int = 0
-        self.alt_a_contingent_average: int = 0
-        # Dictionaries containing all k-contingencies so far
+        self.alt_b_contingent_average = 0
+        self.alt_a_contingent_average = 0
         self.alt_a_contingencies = dict()
         self.alt_b_contingencies = dict()
-        # Array of previous choices, where 1's indicate a
-        # choice of alternative A and 0's indicate choice of alternative B.
-        self.previous_choices = np.zeros(number_of_trials, dtype=np.int8)
-        # Array of all outcomes
-        self.outcomes = np.zeros(number_of_trials, dtype=np.int8)
-        # Arrays of outcomes for each Alternative on each trial that it was chosen
-        self.alt_a_outcomes = np.zeros(number_of_trials, dtype=np.int8)
-        self.alt_b_outcomes = np.zeros(number_of_trials, dtype=np.int8)
-        # Indexes that count how many times each choice was made.
-        self.choice_indexes: dict[int, int] = {ALTERNATIVE_A: 0, ALTERNATIVE_B: 0}
-        # Index of current trial
-        self.trial_number: int = 0
-        # Array of surprise_t values at each trial
-        self.surprises: np.ndarray = np.zeros(number_of_trials, dtype=np.float64)
-        # All of CATIE agent parameters
-        self.tao = tao
-        self.epsilon = epsilon
-        self.phi = phi
-        self.k = random.randint(0, k)
+        self.previous_choices = np.zeros(N_TRIALS, dtype=np.int8)
+        self.outcomes = np.zeros(N_TRIALS, dtype=np.int8)
+        self.alt_a_outcomes = np.zeros(N_TRIALS, dtype=np.int8)
+        self.alt_b_outcomes = np.zeros(N_TRIALS, dtype=np.int8)
+        self.choice_indexes = {ALTERNATIVE_A: 0, ALTERNATIVE_B: 0}
+        self.trial_number = 0
+        self.surprises = np.zeros(N_TRIALS, dtype=np.float64)
+        self.tao = TAO
+        self.epsilon = EPSILON
+        self.phi = PHI
+        self.k = random.randint(0, K)
         self.trend = 0
 
-    def choose(self):
+
+    cdef choose(self):
         """
         Controls choice mechanism for CATIE agent, using the 4 different modes for decision-making.
             1.If the agent chose the same alternative in two consecutive trials and their outcomes differed, it
@@ -105,20 +119,19 @@ class CatieAgent:
 
         return int(choice)
 
-    @staticmethod
-    def random_choice():
+    cdef random_choice(self):
         """
         :return: A random choice between the two alternatives.
         """
         return random.randint(0, 1)  # random choice between Alternative A or Alternative B
 
-    def other_choice(self):
+    cdef other_choice(self):
         """
         :return: Given the previous choice return the other alternative.
         """
         return (self.previous_choices[self.trial_number - 1] + 1) % 2
 
-    def get_trend(self):
+    cdef get_trend(self):
         """
         In this mode the agent chooses the “positive trend” meaning if the outcome of the previous choice was
         bigger then the one preceding it, we choose it ̧otherwise we switch choices.
@@ -135,7 +148,7 @@ class CatieAgent:
         return self.previous_choices[self.trial_number - 1] if self.outcomes[self.trial_number - 1] > self.outcomes[
             self.trial_number - 2] else self.other_choice()
 
-    def contingent_average(self, k, choice):
+    cdef contingent_average(self, k, choice):
         """
         The contingent average of the input alternative.
         """
@@ -165,10 +178,10 @@ class CatieAgent:
             contingency_values = random_contingency[CONTINGENCIES_ARRAY]
             return np.mean(contingency_values[:index])
 
-    def receive_outcome(self, choice, outcome):
+    cdef receive_outcome(self, choice, outcome):
         """
         :param choice:  ALTERNATIVE_A = 1 or ALTERNATIVE_B = 0
-        :param outcome: A tuple (reward_alternative_b, reward_alternative_a)
+        :param outcome: A tuple (reward_alternative_b 1 or 0, reward_alternative_a 1 or 0)
         """
         if choice == ALTERNATIVE_A:
             choice_outcomes = self.alt_a_outcomes
@@ -199,7 +212,7 @@ class CatieAgent:
             if current_contingency not in choice_contingencies:
                 # Storing in dictionary index of how many contingencies were seen.
                 # and in the array keep track of the outcomes
-                choice_contingencies[current_contingency] = [0, np.zeros(self.number_of_trials)]
+                choice_contingencies[current_contingency] = [0, np.zeros(N_TRIALS)]
             # Current index of array containing the current contingency
             index = choice_contingencies[current_contingency][CONTINGENCIES_INDEX]
             # Assign correct outcome to the index of the array and increment index
@@ -208,105 +221,32 @@ class CatieAgent:
 
         self.trial_number += 1
 
-    def get_current_k_contingency(self, k=None):
+    cdef get_current_k_contingency(self, k=None):
         k = self.k if k is None else k
         return tuple(zip(self.previous_choices[self.trial_number - k:self.trial_number],
                          self.outcomes[self.trial_number - k:self.trial_number]))
 
-    def get_p_explore(self):
+    cdef get_p_explore(self):
         return self.epsilon / 3 * ((1 + self.surprises[self.trial_number - 1] +
                                     np.mean(self.surprises[:self.trial_number])) if self.trial_number else 1)
 
-    def get_last_choice(self):
+    cdef get_last_choice(self):
         if self.trial_number == 0:
             return NO_LAST_CHOICE
         return self.previous_choices[self.trial_number - 1]
 
-    def get_contingent_average(self):
+    cdef get_contingent_average(self):
         """
         Return the contingent average of both alternatives.
         """
         return self.alt_a_contingent_average, self.alt_b_contingent_average
 
-    def get_bias(self):
+    cdef get_bias(self):
         return self.previous_choices.sum()
 
-
-def sequence_catie_score(reward_schedule, repetitions=100, plot_distribution=False, plot_sequence=False):
-    schedule_target, schedule_anti_target = reward_schedule[0], reward_schedule[1]
-    biases = []
-    for i in tqdm.trange(repetitions):
-        catie_agent = CatieAgent()
-        choices = []
-        for t, (reward_target, reward_anti_target) in enumerate(zip(schedule_target, schedule_anti_target)):
-            choice = catie_agent.choose()
-            outcome = reward_target, reward_anti_target
-            catie_agent.receive_outcome(choice, outcome)
-            choices.append(choice)
-        biases.append(sum(choices))
-
-    if plot_distribution:
-        plt.figure()
-        plt.hist(biases, color='royalblue', alpha=0.5, density=True)
-        plt.ylabel('Probability')
-        plt.xlabel('Bias')
-        plt.axvline(statistics.mean(biases), color='k', linestyle='dashed', linewidth=1)
-        min_ylim, max_ylim = plt.ylim()
-        plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.95, 'Mean: {:.3f}'.format(statistics.mean(biases)))
-    return biases, statistics.mean(biases)
-
-
-N = 10000
-
-
-def test_catie_opt():
-    """
-    Test the performance of the potimized sequence vs. the "naive optimal" (25 rewards at the beginning of the target
-    and at the end of the anti target). As sanity check, test the bias distribution of sending the optimized sequence
-    where the target is anti targer and vice versa (should be symmetric around 50).
-    """
-    optimized = np.array(
-        [1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
-         1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-         0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-         0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-         0., 0., 0., 0., ]), np.array(
-        [0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-         0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-         0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-         0., 0., 0., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
-         1., 1., 1., 1.])
-
-    mean_bias_optimized = sequence_catie_score(optimized, N, True)
-    plt.title("CATIE Static Naive Nadav's implementation")
-    plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.9,
-             f'error: +/-{statistics.pstdev(mean_bias_optimized[0]) / N:.3f}%')
-    plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.85, f'N: {N}')
-
-
-def comp_winner_test():
-    winner_schedule = (np.array([1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 0., 1., 1., 0., 0., 0., 1.,
-                                 1., 1., 1., 1., 0., 0., 1., 1., 1., 1., 0., 0., 0., 0., 0., 1., 0.,
-                                 0., 0., 0., 1., 0., 0., 1., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                                 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                                 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                                 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]),
-                       np.array([0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0.,
-                                 0., 0., 0., 0., 1., 0., 0., 0., 1., 0., 1., 0., 0., 0., 0., 0., 1.,
-                                 0., 0., 0., 0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1.,
-                                 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0.,
-                                 0., 0., 0., 1., 0., 0., 1., 0., 1., 0., 1., 0., 0., 1., 0., 1., 0.,
-                                 1., 1., 0., 0., 1., 1., 0., 1., 1., 0., 1., 1., 1., 1., 1.]))
-    mean_bias_optimized = sequence_catie_score(winner_schedule, N, True)
-    plt.title("CATIE Static Winner Nadav's implementation")
-    plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.9,
-             f'error: +/-{statistics.pstdev(mean_bias_optimized[0]) / np.sqrt(N):.3f}%')
-    plt.text(plt.xlim()[0] * 1.1, plt.ylim()[1] * 0.85, f'N: {N}')
-
-
-if __name__ == '__main__':
-    np.random.seed(1)
-    random.seed(1)
-    test_catie_opt()
-    comp_winner_test()
-    plt.show()
+    cdef get_catie_param(self):
+        trend = self.trend
+        p_explore = self.get_p_explore()
+        last_choice = self.get_last_choice()
+        biased_ca, anti_biased_ca = self.get_contingent_average()
+        return [TAO, PHI, EPSILON, K, trend, p_explore, last_choice, float(biased_ca), float(anti_biased_ca)]

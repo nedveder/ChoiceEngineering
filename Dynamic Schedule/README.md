@@ -5,13 +5,13 @@ on <a href=https://github.com/ericyangyu/PPO-for-Beginners>ericyangyu</a> reposi
 ## Algorithm: ##
 This is the pseudocode for the PPO algorithm used.
 <div style="text-align: center;">
-    <p><img src="imagespo_pseudocode.svg" alt="PPO Pseudocode" style="background-color: white; max-width: 100%;" /></p>
-    <p><img src="images_func.svg" alt="G function" style="background-color: white; max-width: 100%;" /></p>
+    <p><img src="images/ppo_pseudocode.svg" alt="PPO Pseudocode" style="background-color: white; max-width: 100%;" /></p>
+    <p><img src="images/g_func.svg" alt="G function" style="background-color: white; max-width: 100%;" /></p>
 </div>
 
 
 ## Usage
-First Use conda environment defined by 'environment.yml' file.
+First Use conda environment defined by 'ChoiceEngineering.yml' file.
 
 To train from scratch:
 ```
@@ -25,7 +25,7 @@ python main.py --mode test --actor_model ppo_actor.pth
 
 To train with existing actor/critic models:
 ```
-python main.py --actor_model ppo_actor.pth --critic_model ppo_critic.pth
+python main.py --actor ppo_actor.pth --critic ppo_critic.pth
 ```
 
 NOTE: to change hyperparameters, etc. do it in [main.py](main.py).
@@ -49,5 +49,8 @@ It's a completely separate module from the training code and this goes to show t
 
 
 ## IDEAS
-1. Add prev choice to network params
-2. Add constraint to network, so it allocate reward to biased alternative in 100 trial
+1. New  loss problem with small beta L=-(N_r+betta*(MSE(R_l,25)+MSE(R_r,25)))
+2. Try to input constrains at network parameters
+3. Check initial distribution of output layer 
+4. Normalize input layer - try with 10 layer network
+5. remove last layer of constraints 

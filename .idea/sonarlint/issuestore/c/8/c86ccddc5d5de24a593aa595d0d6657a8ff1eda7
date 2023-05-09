@@ -2,7 +2,6 @@
 \python:S112K">Replace this generic exception class with a more specific one.(¸õÛÕ8É¨×Áù0
 \python:S112_">Replace this generic exception class with a more specific one.(û‹ó®8Ê¨×Áù0
 }python:S1845y"YRename field "k" to prevent any misunderstanding/clash with field "K" defined on line 120(Õ Ï£ûÿÿÿÿ8Ê¨×Áù0
-kpython:S117t"MRename this parameter "K" to match the regular expression ^[_a-z][a-z0-9_]*$.(ÆÓ÷•8Ê¨×Áù0
 >python:S125¬"Remove this commented out code.(ñâÄª8Ê¨×Áù0
 tpython:S3776°"TRefactor this function to reduce its Cognitive Complexity from 41 to the 15 allowed.(´³Âº8Ê¨×Áù0
 ypython:S3776ñ"TRefactor this function to reduce its Cognitive Complexity from 17 to the 15 allowed.(Á±„çýÿÿÿÿ8Ê¨×Áù0

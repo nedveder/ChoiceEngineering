@@ -11,6 +11,7 @@ import torch
 from matplotlib import pyplot as plt
 from concurrent.futures import ProcessPoolExecutor
 import concurrent.futures
+from scipy.stats import norm
 
 from tqdm import tqdm
 
@@ -132,18 +133,34 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
     """
     # 1. Bias distribution
     plt.figure()
-    plt.hist(ep_bias, bins=30, density=True)
-    plt.xlabel('Bias')
-    plt.ylabel('Frequency')
-    plt.title('Bias Distribution')
-
     mean_ep_returns = np.mean(ep_bias)
     std_error = np.std(ep_bias) / np.sqrt(len(ep_bias))
+    x_values = np.arange(0, 100)
+
+    # Create a histogram using the first y-axis
+    ax1 = plt.gca()
+    ax1.hist(ep_bias, bins=30, range=(0, 100), density=True, color='blue', alpha=0.5)
+    ax1.set_ylabel('Frequency', color='blue')
+    ax1.tick_params(axis='y', labelcolor='blue')
+
+    # Create a second y-axis
+    ax2 = ax1.twinx()
+
+    pdf_values = norm.pdf(x_values, loc=mean_ep_returns, scale=np.std(ep_bias))
+    # Plot the probability distribution using the second y-axis
+    ax2.plot(x_values, pdf_values, label='Probability Distribution', color='red')
+    ax2.set_ylabel('Probability', color='red')
+    ax2.tick_params(axis='y', labelcolor='red')
+
+    plt.xlabel('Bias')
+    plt.title('Bias Distribution')
+
     # Add an annotation for the mean and standard error
     annotation_text = f"Mean: {mean_ep_returns:.2f}(+-{std_error:.2f})"
     plt.annotate(annotation_text, xy=(0.05, 0.8), xycoords='axes fraction', fontsize=12,
                  bbox=dict(facecolor='white'))
 
+    # Save the figure
     plt.savefig(f'Plots/{name}/bias_distribution_{name}.png')
 
     # 2. Average reward assignment

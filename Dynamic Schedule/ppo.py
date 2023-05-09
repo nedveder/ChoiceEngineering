@@ -51,7 +51,7 @@ class PPO:
         self.n_episodes = n_episodes
         self.n_trials = n_trials
         self.n_repetitions = n_repetitions
-        self.n_updates_per_batch = 64
+        self.n_updates_per_batch = 32
         self.hidden_size = hidden_size
         self.max_bias_achieved = 0
 
@@ -93,7 +93,10 @@ class PPO:
             # Get data from environment for batch training
             batch_obs, batch_acts, batch_log_probs, batch_rtgs = self.parallel_rollout() if DEVICE == torch.device(
                 'cpu') else self.rollout()
-
+            avg_ep_rewards = np.mean([np.sum(ep_rewards) for ep_rewards in self.logger['batch_rewards']])
+            if avg_ep_rewards > self.max_bias_achieved:
+                self.max_bias_achieved = avg_ep_rewards
+                torch.save(self.actor.state_dict(), f'./{self.name}/ppo_actor_best_{self.name}.pth')
             # Calculate advantage at k-th iteration
             V, _ = self.evaluate(batch_obs, batch_acts)
             A_t = batch_rtgs - V.detach()
@@ -139,11 +142,9 @@ class PPO:
 
             # Print a summary of our training so far
             self._log_summary()
-
             # Save our model if it's time
             if batch_num % self.save_freq == 0:
                 self.plot_training_progress()
-                self.max_bias_achieved = self.network_rewards_each_epoch[-1]
                 torch.save(self.actor.state_dict(), f'./{self.name}/ppo_actor_{self.name}.pth')
                 torch.save(self.critic.state_dict(), f'./{self.name}/ppo_critic_{self.name}.pth')
 
@@ -152,10 +153,11 @@ class PPO:
 
         """
         # Batch data.
-        batch_obs = np.zeros((self.n_episodes * self.n_trials, self.obs_dim))
-        batch_acts = np.zeros((self.n_episodes * self.n_trials, 2))
-        batch_log_probs = np.zeros(self.n_episodes * self.n_trials)
-        batch_rewards = np.zeros((self.n_episodes, self.n_trials))
+        batch_size = self.n_episodes * self.n_trials
+        batch_obs = np.zeros((batch_size, self.obs_dim), dtype=np.float64)
+        batch_acts = np.zeros((batch_size, 2), dtype=np.int8)
+        batch_log_probs = np.zeros(batch_size, dtype=np.float64)
+        batch_rewards = np.zeros((self.n_episodes, self.n_trials), dtype=np.int8)
         ep_rewards = torch.zeros(self.n_trials)
 
         for episode in range(self.n_episodes):
@@ -188,7 +190,9 @@ class PPO:
         batch_obs = torch.tensor(batch_obs, dtype=torch.float).to(DEVICE)
         batch_acts = torch.tensor(batch_acts, dtype=torch.float).to(DEVICE)
         batch_log_probs = torch.tensor(batch_log_probs, dtype=torch.float).to(DEVICE)
-        batch_rtgs = self.compute_rtgs(batch_rewards)  # ALG STEP 4
+        batch_rtgs = torch.flip(torch.tensor(batch_rewards, dtype=torch.float).to(DEVICE), [1]).cumsum(dim=1) \
+            .flip([1]) \
+            .flatten()
 
         # Log the episodic returns and episodic lengths in this batch.
         self.logger['batch_rewards'] = list(batch_rewards)
@@ -197,10 +201,10 @@ class PPO:
 
     @staticmethod
     def rollout_single_episode(select_action, env, n_trials, obs_dim):
-        ep_obs = np.zeros((n_trials, obs_dim))
-        ep_acts = np.zeros((n_trials, 2))
-        ep_log_probs = np.zeros(n_trials)
-        ep_rewards = np.zeros(n_trials)
+        ep_obs = np.zeros((n_trials, obs_dim), dtype=np.float64)
+        ep_acts = np.zeros((n_trials, 2), dtype=np.int8)
+        ep_log_probs = np.zeros(n_trials, dtype=np.float64)
+        ep_rewards = np.zeros(n_trials, dtype=np.int8)
 
         observation, _ = env.reset()
 
@@ -220,68 +224,41 @@ class PPO:
 
     def parallel_rollout(self):
         batch_size = self.n_episodes * self.n_trials
-        batch_obs = np.zeros((batch_size, self.obs_dim))
-        batch_acts = np.zeros((batch_size, 2))
-        batch_log_probs = np.zeros(batch_size)
-        batch_rewards = np.zeros((self.n_episodes, self.n_trials))
+        batch_obs = np.zeros((batch_size, self.obs_dim), dtype=np.float64)
+        batch_acts = np.zeros((batch_size, 2), dtype=np.int8)
+        batch_log_probs = np.zeros(batch_size, dtype=np.float64)
+        batch_rewards = np.zeros((self.n_episodes, self.n_trials), dtype=np.int8)
 
         with ProcessPoolExecutor() as executor:
             future_results = [
                 executor.submit(self.rollout_single_episode, self.select_action, self.env, self.n_trials, self.obs_dim)
-                for _ in range(self.n_episodes)]
+                for _ in range(self.n_episodes)
+            ]
+
+            results = [None] * len(future_results)
 
             for future in concurrent.futures.as_completed(future_results):
                 index = future_results.index(future)
-                ep_obs, ep_acts, ep_log_probs, ep_rewards = future.result()
-                episode_start = index * self.n_trials
-                episode_end = (index + 1) * self.n_trials
+                results[index] = future.result()
+
+            for i, (ep_obs, ep_acts, ep_log_probs, ep_rewards) in enumerate(results):
+                episode_start = i * self.n_trials
+                episode_end = (i + 1) * self.n_trials
                 batch_obs[episode_start:episode_end] = ep_obs
                 batch_acts[episode_start:episode_end] = ep_acts
                 batch_log_probs[episode_start:episode_end] = ep_log_probs
-                batch_rewards[index] = ep_rewards
+                batch_rewards[i] = ep_rewards
 
         batch_obs = torch.tensor(batch_obs, dtype=torch.float, device=DEVICE)
         batch_acts = torch.tensor(batch_acts, dtype=torch.float, device=DEVICE)
         batch_log_probs = torch.tensor(batch_log_probs, dtype=torch.float, device=DEVICE)
-        batch_rtgs = self.compute_rtgs(batch_rewards)
+        batch_rtgs = torch.flip(torch.tensor(batch_rewards, dtype=torch.float).to(DEVICE), [1]).cumsum(dim=1) \
+            .flip([1]) \
+            .flatten()
 
         self.logger['batch_rewards'] = list(batch_rewards)
 
         return batch_obs, batch_acts, batch_log_probs, batch_rtgs
-
-    def compute_rtgs(self, batch_rewards):
-        """
-            Compute the Reward-To-Go of each timestep in a batch given the rewards.
-            Parameters:
-                batch_rews - the rewards in a batch, Shape: (number of episodes, number of timesteps per episode)
-            Return:
-                batch_rtgs - the rewards to go, Shape: (number of timesteps in batch)
-        """
-        # The rewards-to-go (rtg) per episode per batch to return.
-        # Convert batch_rewards to a PyTorch tensor
-        batch_rewards = torch.tensor(batch_rewards, dtype=torch.float).to(DEVICE)
-
-        # Initialize an empty tensor to store the rewards-to-go
-        batch_rtgs = torch.empty_like(batch_rewards).to(DEVICE)
-
-        # Iterate through each episode
-        for i in range(batch_rewards.shape[0]):
-            ep_rewards = batch_rewards[i, :]
-
-            # Compute the rewards-to-go for the current episode
-            rtg = torch.empty_like(ep_rewards)
-            discounted_reward = 0
-            for j in reversed(range(ep_rewards.shape[0])):
-                discounted_reward = ep_rewards[j] + discounted_reward * self.gamma
-                rtg[j] = discounted_reward
-
-            # Store the computed rewards-to-go in the batch_rtgs tensor
-            batch_rtgs[i, :] = rtg
-
-        # Flatten the batch_rtgs tensor
-        batch_rtgs = batch_rtgs.flatten()
-
-        return batch_rtgs
 
     def select_action(self, state):
         action_probs = self.actor(state)
@@ -375,7 +352,7 @@ class PPO:
         ax.set_title("Policy Network Training for Catie Agent")
         xy_cord = 'axes fraction'
         if epoch > 1:
-            ax.annotate(f"Training Slope: {fit_coeffs[0]:.2f}", xy=(0.5, 0.45), xycoords=xy_cord)
+            ax.annotate(f"Training Slope: {fit_coeffs[0]:.5f}", xy=(0.5, 0.45), xycoords=xy_cord)
         ax.annotate(f"N = {self.n_repetitions}", xy=(0.5, 0.4), xycoords=xy_cord)
         ax.annotate(f"Highest Reward Mean = {max_reward:.2f}", xy=(0.5, 0.35), xycoords=xy_cord)
         ax.legend()
@@ -393,7 +370,7 @@ class PPO:
         batch_df.to_csv(csv_file, mode='a', header=not os.path.exists(csv_file), index=False)
 
     def _test_network(self):
-        rep_rewards = np.zeros(self.n_repetitions)
+        rep_rewards = np.zeros(self.n_repetitions, dtype=np.int8)
         # REPETITIONS FOR INCREASED ACCURACY IN RESULTS
         for repetition in range(self.n_repetitions):
             state, _ = self.env.reset()
@@ -415,7 +392,7 @@ class PPO:
 
     def _test_network_single_run(self, repetition):
         state, _ = self.env.reset()
-        rewards = np.zeros(self.n_trials)
+        rewards = np.zeros(self.n_trials, dtype=np.int8)
 
         for t in range(self.n_trials):
             action_probs = self.actor(state)

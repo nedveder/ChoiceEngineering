@@ -71,6 +71,7 @@ class CatieAgentEnv:
             dtype=np.float64)
         reward = choice
         done = self.trial_number == self.max_trials
+        # TODO add loss for last trial
         return observation, reward, done, {}
 
     def compute_reward(self) -> int:
