@@ -1,6 +1,5 @@
 4layers
-4layers_small_lr
-4layers_small_lr_
-5layers
-6layers_1e5lr
+4layer_constraints_in_input_layer
+4layer_no_constraints
+10layers
 Plots
