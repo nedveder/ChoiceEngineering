@@ -90,7 +90,7 @@ class PPO:
         self.logger['n_batches'] = n_batches
         torch.save(self.actor.state_dict(), f'./{self.name}/ppo_actor_initial.pth')
         for batch_num in range(n_batches):
-            self.beta = 0 if batch_num < 30 else np.log((batch_num - 29)/100+1)
+            self.beta = 0 if batch_num < 30 else np.log((batch_num - 29) / 100 + 1)
             self.logger['cur_batch'] = batch_num
             # Get data from environment for batch training
             batch_obs, batch_acts, batch_log_probs, batch_rtgs = self.rollout()
@@ -189,63 +189,6 @@ class PPO:
 
         # Log the episodic returns and episodic lengths in this batch.
         self.logger['batch_rewards'] = batch_rewards
-
-        return batch_obs, batch_acts, batch_log_probs, batch_rtgs
-
-    def rollout_single_episode(self, select_action, env, n_trials, obs_dim):
-        ep_obs = np.zeros((n_trials, obs_dim), dtype=np.float64)
-        ep_acts = np.zeros((n_trials, 2), dtype=np.int8)
-        ep_log_probs = np.zeros(n_trials, dtype=np.float64)
-        ep_rewards = np.zeros(n_trials, dtype=np.int8)
-
-        observation, _ = env.reset(self.beta)
-
-        for trial in range(n_trials):
-            ep_obs[trial] = observation
-            action, log_prob = select_action(observation)
-            observation, reward, _, choice = env.step(action)
-
-            ep_rewards[trial] = reward
-            ep_acts[trial] = action
-            ep_log_probs[trial] = log_prob
-
-        return ep_obs, ep_acts, ep_log_probs, ep_rewards
-
-    def parallel_rollout(self):
-        batch_size = self.n_episodes * self.n_trials
-        batch_obs = np.zeros((batch_size, self.obs_dim), dtype=np.float64)
-        batch_acts = np.zeros((batch_size, 2), dtype=np.int8)
-        batch_log_probs = np.zeros(batch_size, dtype=np.float64)
-        batch_rewards = np.zeros((self.n_episodes, self.n_trials), dtype=np.int8)
-
-        with ProcessPoolExecutor() as executor:
-            future_results = [
-                executor.submit(self.rollout_single_episode, self.select_action, self.env, self.n_trials, self.obs_dim)
-                for _ in range(self.n_episodes)
-            ]
-
-            results = [None] * len(future_results)
-
-            for future in concurrent.futures.as_completed(future_results):
-                index = future_results.index(future)
-                results[index] = future.result()
-
-            for i, (ep_obs, ep_acts, ep_log_probs, ep_rewards) in enumerate(results):
-                episode_start = i * self.n_trials
-                episode_end = (i + 1) * self.n_trials
-                batch_obs[episode_start:episode_end] = ep_obs
-                batch_acts[episode_start:episode_end] = ep_acts
-                batch_log_probs[episode_start:episode_end] = ep_log_probs
-                batch_rewards[i] = ep_rewards
-
-        batch_obs = torch.tensor(batch_obs, dtype=torch.float, device=DEVICE)
-        batch_acts = torch.tensor(batch_acts, dtype=torch.float, device=DEVICE)
-        batch_log_probs = torch.tensor(batch_log_probs, dtype=torch.float, device=DEVICE)
-        batch_rtgs = torch.flip(torch.tensor(batch_rewards, dtype=torch.float).to(DEVICE), [1]).cumsum(dim=1) \
-            .flip([1]) \
-            .flatten()
-
-        self.logger['batch_rewards'] = list(batch_rewards)
 
         return batch_obs, batch_acts, batch_log_probs, batch_rtgs
 
@@ -373,31 +316,6 @@ class PPO:
                 rewards[t] = choice
 
             rep_rewards[repetition] = rewards.sum()
-        return rep_rewards
-
-    def _test_network_single_run(self, repetition):
-        state, _ = self.env.reset(self.beta)
-        choices = np.zeros(self.n_trials, dtype=np.int8)
-
-        for t in range(self.n_trials):
-            action_probs = self.actor(state, is_test=True)
-            action = INDEX_TO_ACTION[torch.multinomial(action_probs, num_samples=1).item()]
-            state, reward, _, choice = self.env.step(action)
-            choices[t] = choice
-
-        return repetition, choices.sum()
-
-    def _parallel_test_network(self):
-        rep_rewards = np.zeros(self.n_repetitions)
-
-        with ProcessPoolExecutor() as executor:
-            future_results = [executor.submit(self._test_network_single_run, repetition) for repetition in
-                              range(self.n_repetitions)]
-
-            for future in concurrent.futures.as_completed(future_results):
-                repetition, reward = future.result()
-                rep_rewards[repetition] = reward
-
         return rep_rewards
 
     def _init_hyperparameters(self, hyperparameters):

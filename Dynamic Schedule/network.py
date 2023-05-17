@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 
-DEVICE = torch.device( "cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class MaskedSoftmax(nn.Module):
@@ -42,7 +42,7 @@ class ForwardNet(nn.Module):
 
         # Apply constraints
         if is_test:
-            assignments, trial_numbers = torch.round(state[:, 9:11]*25), torch.round(state[:, 13]*100)
+            assignments, trial_numbers = torch.round(state[:, 9:11] * 25), torch.round(state[:, 13] * 100)
             mask[(assignments[:, 0] <= trial_numbers - 75) | (assignments[:, 1] <= trial_numbers - 75), 0] = 0
             mask[(assignments[:, 0] >= 25) | (assignments[:, 1] <= trial_numbers - 75), 1] = 0
             mask[(assignments[:, 1] >= 25) | (assignments[:, 0] <= trial_numbers - 75), 2] = 0
