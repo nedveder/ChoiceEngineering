@@ -190,6 +190,9 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
     # Customizing the plot
     plt.xlabel("Trial")
     plt.ylabel("Probability Density")
+    plt.annotate(f"Total rewards given:{np.sum(reward_probabilities[:, 0],axis=0)},"
+                 f"{np.sum(reward_probabilities[:, 1],axis=0)}", xy=(0.1, 1.08), xycoords='axes fraction')
+
     plt.title("Probability for Reward Assignment")
     plt.legend()
 
