@@ -50,7 +50,7 @@ It's a completely separate module from the training code and this goes to show t
 
 ## IDEAS
 1. New  loss problem with small beta L=-(N_r+betta*(MSE(R_l,25)+MSE(R_r,25)))
-2. Try to input constrains at network parameters
+2. Try to input constrains at network parameters - network continues to repeat same pattern - close to constraint layer
 3. Check initial distribution of output layer 
 4. Normalize input layer - try with 10 layer network
 5. remove last layer of constraints 

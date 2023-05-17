@@ -58,45 +58,37 @@ def select_action(state, policy):
     action : int
         The sampled action to be taken in the current state, considering the problem-specific constraints.
     """
-    action_probs = policy(state)
-
-    # Sample an action from the distribution
-    action_idx = torch.multinomial(action_probs, num_samples=1).item()
-    action = INDEX_TO_ACTION[action_idx]
+    # Get action probabilities from network
+    action_probs = policy(state, is_test=True)
 
     # Return the sampled action
-    return action
+    return INDEX_TO_ACTION[torch.multinomial(action_probs, num_samples=1).item()]
 
 
-def rollout_single_episode(policy, env):
-    observation, _ = env.reset()
-    rewards = []
-    actions = []
-    for _ in range(N_TRIALS):
-        action = select_action(observation, policy)
-        observation, reward, done, _ = env.step(action)
-        rewards.append(reward)
-        actions.append(action)
-    episode_bias = env.compute_reward()
-    return episode_bias, rewards, actions
-
-
-def parallel_rollout(policy, env, n_iterations):
+def rollout(policy, env, n_iterations):
     episode_biases = np.zeros(n_iterations)
-    episode_rewards = [None] * n_iterations
-    episode_actions = [None] * n_iterations
+    episode_choices = np.zeros((n_iterations, 100))
+    episode_actions = np.zeros((n_iterations, N_TRIALS, 2))
+    choices = np.zeros(N_TRIALS)
+    actions = np.zeros((N_TRIALS, 2))
 
-    with ProcessPoolExecutor() as executor:
-        future_results = [executor.submit(rollout_single_episode, policy, env) for _ in range(n_iterations)]
+    for index in tqdm(range(n_iterations)):
+        observation, _ = env.reset()
+        choices *= 0
+        actions *= 0
+        for i in range(N_TRIALS):
+            action_probs = policy(observation, is_test=True)
+            action = INDEX_TO_ACTION[torch.multinomial(action_probs, num_samples=1).item()]
 
-        for future in tqdm(concurrent.futures.as_completed(future_results)):
-            index = future_results.index(future)
-            episode_bias, rewards, actions = future.result()
-            episode_biases[index] = episode_bias
-            episode_rewards[index] = rewards
-            episode_actions[index] = actions
+            observation, reward, done, choice = env.step(action)
+            choices[i] = choice
+            actions[i] = action
 
-    return episode_biases, episode_rewards, episode_actions
+        episode_biases[index] = env.compute_reward()
+        episode_choices[index] = choices
+        episode_actions[index] = actions
+
+    return episode_biases, episode_choices, episode_actions
 
 
 def eval_policy(policy, env, n_iterations, name):
@@ -113,7 +105,7 @@ def eval_policy(policy, env, n_iterations, name):
             None
     """
     # Rollout with the policy and environment, and log each episode's data
-    ep_bias, ep_agent_choices, ep_actions = parallel_rollout(policy, env, n_iterations)
+    ep_bias, ep_agent_choices, ep_actions = rollout(policy, env, n_iterations)
     plot_data(ep_bias, ep_agent_choices, ep_actions, str(name))
 
 
@@ -123,8 +115,8 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
 
     Parameters:
         ep_bias : A list of the total bias for each experiment.
-        ep_choices (list): A list of lists, where every sublist describes the choices for each trial in the episode.
-        ep_actions (list): A list of lists, where every sublist describes the actions(reward allocation) meaning a list
+        ep_choices : A list of lists, where every sublist describes the choices for each trial in the episode.
+        ep_actions : A list of lists, where every sublist describes the actions(reward allocation) meaning a list
             of tuples for each trial in the episode.
         name : Name of the current network
 

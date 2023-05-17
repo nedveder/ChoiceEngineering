@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device( "cpu")
 
 
 class MaskedSoftmax(nn.Module):
@@ -36,27 +36,27 @@ class ForwardNet(nn.Module):
         self.masked_softmax = MaskedSoftmax()
 
     @staticmethod
-    def _apply_constraints(state: torch.Tensor) -> torch.Tensor:
-        assignments, trial_numbers = state[:, 9:11], state[:, 13]
-
-        # Create masks for valid actions - CONSTRAINTS
+    def _apply_constraints(state: torch.Tensor, is_test) -> torch.Tensor:
+        # Create masks for valid actions
         mask = torch.ones(4).repeat(state.shape[0], 1).to(DEVICE)
 
         # Apply constraints
-        mask[(assignments[:, 0] <= trial_numbers - 75) | (assignments[:, 1] <= trial_numbers - 75), 0] = 0
-        mask[(assignments[:, 0] >= 25) | (assignments[:, 1] <= trial_numbers - 75), 1] = 0
-        mask[(assignments[:, 1] >= 25) | (assignments[:, 0] <= trial_numbers - 75), 2] = 0
-        mask[(assignments[:, 0] >= 25) | (assignments[:, 1] >= 25), 3] = 0
+        if is_test:
+            assignments, trial_numbers = torch.round(state[:, 9:11]*25), torch.round(state[:, 13]*100)
+            mask[(assignments[:, 0] <= trial_numbers - 75) | (assignments[:, 1] <= trial_numbers - 75), 0] = 0
+            mask[(assignments[:, 0] >= 25) | (assignments[:, 1] <= trial_numbers - 75), 1] = 0
+            mask[(assignments[:, 1] >= 25) | (assignments[:, 0] <= trial_numbers - 75), 2] = 0
+            mask[(assignments[:, 0] >= 25) | (assignments[:, 1] >= 25), 3] = 0
 
         return mask
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, is_test=False) -> torch.Tensor:
         """
         Perform a forward pass through the neural network.
 
         Args:
             x (torch.Tensor): The input tensor.
-            batch_constraints (bool): Whether to apply constraints in a batch or not.
+            is_test (bool): Whether to apply constraints or not.
 
         Returns:
             torch.Tensor: The output tensor.
@@ -80,7 +80,7 @@ class ForwardNet(nn.Module):
 
         # Mask layer
         if not self.critic:
-            mask = self._apply_constraints(x)
+            mask = self._apply_constraints(x, is_test)
             out = self.masked_softmax(self.output_layer(out), mask)
         else:
             out = self.output_layer(out)
