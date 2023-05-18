@@ -63,7 +63,7 @@ def train(env, hyperparameters, actor_model, critic_model):
     model.learn(n_batches=hyperparameters['n_batches'])
 
 
-def test(env, hyperparameters, actor_model, num_iterations=50000):
+def test(env, hyperparameters, actor_model, num_iterations=100000):
     """
         Tests the model.
         Parameters:

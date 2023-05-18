@@ -148,7 +148,7 @@ def plot_data(ep_bias, ep_choices, ep_actions, name):
     plt.title('Bias Distribution')
 
     # Add an annotation for the mean and standard error
-    annotation_text = f"Mean: {mean_ep_returns:.2f}(+-{std_error:.2f})"
+    annotation_text = f"Mean: {mean_ep_returns:.3f}(+-{std_error:.3f})"
     plt.annotate(annotation_text, xy=(0.05, 0.8), xycoords='axes fraction', fontsize=12,
                  bbox=dict(facecolor='white'))
 
