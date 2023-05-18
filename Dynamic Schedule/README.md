@@ -15,17 +15,17 @@ First Use conda environment defined by 'ChoiceEngineering.yml' file.
 
 To train from scratch:
 ```
-python main.py
+python main.py --name NAME_YOU_WANT_PLOTS_TO_APPEAR_IN
 ```
 
 To test model:
 ```
-python main.py --mode test --actor_model ppo_actor.pth
+python main.py --name NAME_YOU_WANT_PLOTS_TO_APPEAR_IN --mode test --actor_model ppo_actor.pth
 ```
 
 To train with existing actor/critic models:
 ```
-python main.py --actor ppo_actor.pth --critic ppo_critic.pth
+python main.py --name NAME_YOU_WANT_PLOTS_TO_APPEAR_IN --actor ppo_actor.pth --critic ppo_critic.pth
 ```
 
 NOTE: to change hyperparameters, etc. do it in [main.py](main.py).
@@ -46,11 +46,3 @@ It's a completely separate module from the training code and this goes to show t
 
 1. OpenAI article proposing PPO algorithm - https://arxiv.org/abs/1707.06347
 2. OpenAI's explanation regarding PPO algorithm - https://spinningup.openai.com/en/latest/algorithms/ppo.html#id2
-
-
-## IDEAS
-1. New  loss problem with small beta L=-(N_r+betta*(MSE(R_l,25)+MSE(R_r,25)))
-2. Try to input constrains at network parameters - network continues to repeat same pattern - close to constraint layer
-3. Check initial distribution of output layer 
-4. Normalize input layer - try with 10 layer network
-5. remove last layer of constraints 
